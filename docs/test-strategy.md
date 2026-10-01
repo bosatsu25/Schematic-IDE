@@ -42,6 +42,7 @@ The project must validate correctness, compatibility, and performance across for
 - verify local-block/chunk/index coordinate round-trips over large generated
   coordinate sets
 - verify fill/replace/delete and inverse operations preserve semantics
+- verify generated edit → undo → redo sequences preserve semantic block states
 
 ### E2E tests
 

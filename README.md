@@ -4,8 +4,8 @@ A local-first, browser-based IDE for Minecraft structures.
 
 ## Status
 
-Phase 0 is merged and Phase 1 quality gates are complete. Phase 2 is
-implementing the format-independent Rust core domain model.
+Phase 0 and the format-independent Core Domain are merged; Phase 1 quality
+gates are complete. Phase 3 is implementing patch-based edit history.
 
 ## Repository structure
 

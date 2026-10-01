@@ -1,0 +1,11 @@
+[package]
+name = "schematic-format"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "schematic_format"
+path = "src/lib.rs"
+
+[dependencies]

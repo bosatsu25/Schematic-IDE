@@ -1,0 +1,12 @@
+[package]
+name = "schematic-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "schematic_wasm"
+path = "src/lib.rs"
+
+[dependencies]

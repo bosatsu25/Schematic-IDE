@@ -1,0 +1,11 @@
+[package]
+name = "schematic-edit"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "schematic_edit"
+path = "src/lib.rs"
+
+[dependencies]

@@ -4,7 +4,8 @@ A local-first, browser-based IDE for Minecraft structures.
 
 ## Status
 
-Phase 0 baseline: repository architecture, clean-room design guardrails, and workspace layout are in place.
+Phase 0 is merged and Phase 1 quality gates are complete. Phase 2 is
+implementing the format-independent Rust core domain model.
 
 ## Repository structure
 

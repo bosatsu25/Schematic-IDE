@@ -32,6 +32,28 @@ Unknown NBT fields are preserved across parse/serialize cycles. Format adapters 
 
 Heavy parsing, validation, conversion, and mesh generation are routed through web workers and the wasm boundary so the main thread remains responsive.
 
+## Core domain invariants
+
+- `Position` is a signed 32-bit document/world coordinate. `BlockPosition` is a
+  signed 64-bit coordinate used for region-local block positions, so converting
+  from any pair of world positions cannot overflow before validation.
+- Region-local coordinates are offsets from the region origin and are valid for
+  storage only when each component is in `[0, size)`. World positions and local
+  positions use distinct types and explicit checked conversion methods.
+- `Size` is non-negative and permits zero on any axis. Bounds are
+  minimum-inclusive and maximum-exclusive; their exclusive endpoints use
+  64-bit arithmetic. Format adapters must normalize a negative-size encoding
+  into an origin plus non-negative size before constructing a `Region`.
+- Core chunks are internal `16 × 16 × 16` storage units, not Minecraft world
+  chunks. Local block positions map with Euclidean division/remainder, including
+  for negative coordinates. Within a chunk, index order is `x + 16*z + 256*y`
+  (X fastest, then Z, then Y).
+- A region owns a canonical block-state palette and sparse internal chunks.
+  Palette indices are allocated in insertion order; block-state properties are
+  sorted by name for equality and hashing, independent of input property order.
+- Core types contain no file-format fields, UI state, renderer types, or
+  WASM-bindgen types.
+
 ## Repository layout
 
 ```

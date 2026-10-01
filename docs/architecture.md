@@ -24,6 +24,11 @@ Large structures are treated as collections of chunks. Edits are tracked per-chu
 
 Commands transform a document and produce a reversible patch set. This avoids full-document snapshots and keeps history scoped to changed regions.
 
+Edit history stores reversible per-block changes grouped by internal storage
+chunk. Applying or reverting a patch validates the entire transition before
+mutating the document, and reports conflicts rather than silently overwriting
+intervening edits.
+
 ### 4. Lossless format handling
 
 Unknown NBT fields are preserved across parse/serialize cycles. Format adapters keep format-specific details separate from domain logic.

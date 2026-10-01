@@ -43,6 +43,10 @@ impl Palette {
         self.states.get(index.0 as usize)
     }
 
+    pub fn index_of(&self, state: &BlockState) -> Option<PaletteIndex> {
+        self.indices.get(state).copied()
+    }
+
     pub fn len(&self) -> usize {
         self.states.len()
     }

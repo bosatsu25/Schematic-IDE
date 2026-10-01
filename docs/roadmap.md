@@ -8,7 +8,8 @@
 - Playwright is not configured. Browser E2E scaffolding is deferred until a
   browser workflow exists in the first vertical slice, avoiding a placeholder
   browser test setup without behavior to exercise.
-- The current implementation branch is Phase 2 — Core Domain.
+- Phase 2 — Core Domain is complete and merged.
+- The current implementation branch is Phase 3 — Edit Engine.
 
 ## Phase 0 — Product / Architecture Baseline
 
@@ -31,13 +32,17 @@ browser E2E setup remains intentionally deferred as described above.
 
 ## Phase 2 — schematic-core
 
+**Complete.**
+
 Implement a format-independent domain model, coordinate semantics, selection
 logic, palette identity, and internal chunk organization. No parser, WASM,
 renderer, or web dependency belongs in this phase.
 
 ## Phase 3 — Edit Engine
 
-Create patch-based command history and undo/redo operations for structural edits.
+Implement patch-based command history and undo/redo operations for structural
+edits. Commands produce per-region, per-storage-chunk patches; history stores
+only those patches, never document snapshots.
 
 ## Phase 4 — Litematic Format
 

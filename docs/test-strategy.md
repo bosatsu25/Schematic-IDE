@@ -39,6 +39,8 @@ The project must validate correctness, compatibility, and performance across for
 ### Property tests
 
 - share invariants across randomized coordinates and block states
+- verify local-block/chunk/index coordinate round-trips over large generated
+  coordinate sets
 - verify fill/replace/delete and inverse operations preserve semantics
 
 ### E2E tests

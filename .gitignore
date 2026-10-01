@@ -1,0 +1,28 @@
+﻿# Node
+node_modules/
+dist/
+coverage/
+.pnpm-store/
+
+# Rust
+target/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+
+# Build / temp
+tmp/
+temp/
+*.tmp

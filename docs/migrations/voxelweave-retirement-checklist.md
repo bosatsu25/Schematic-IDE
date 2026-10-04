@@ -24,6 +24,7 @@ This checklist tracks the requirements for safely retiring independent developme
 - [x] **Rust Format & Linting**: `cargo fmt --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass cleanly.
 - [x] **Workspace Test Suite**: `cargo test --workspace --all-targets` passes all tests across all crates.
 - [x] **Web & Shared Packages**: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` pass with zero errors.
+- [x] **Browser Workflow (.litematic End-to-End)**: Full editing lifecycle tested in headless Chromium via Playwright E2E test (`apps/web/e2e/litematic-workflow.spec.ts`) and verified in GitHub Actions CI (Run 37177409657).
 - [x] **Independent Checkout Verification**: Repository builds and passes all tests without external references to VoxelWeave directories.
 
 ## 4. Archival Recommendation

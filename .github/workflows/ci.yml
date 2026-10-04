@@ -40,6 +40,6 @@ jobs:
       - name: Build
         run: pnpm build
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: pnpm --filter @schematic-ide/web exec playwright install --with-deps chromium
       - name: E2E Browser Test
         run: pnpm --filter @schematic-ide/web test:e2e

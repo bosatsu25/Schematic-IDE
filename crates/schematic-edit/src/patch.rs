@@ -13,7 +13,7 @@ pub struct BlockChange {
 }
 
 impl BlockChange {
-    pub(crate) const fn new(
+    pub const fn new(
         position: BlockPosition,
         before: Option<PaletteIndex>,
         after: Option<PaletteIndex>,
@@ -70,14 +70,14 @@ pub struct PatchSet {
 }
 
 impl PatchSet {
-    pub(crate) fn empty() -> Self {
+    pub fn empty() -> Self {
         Self {
             patches: Vec::new(),
             palette_additions: Vec::new(),
         }
     }
 
-    pub(crate) fn from_changes(
+    pub fn from_changes(
         region_id: RegionId,
         changes: impl IntoIterator<Item = BlockChange>,
         palette_addition: Option<(PaletteIndex, BlockState)>,
@@ -123,6 +123,40 @@ impl PatchSet {
 
     pub fn is_empty(&self) -> bool {
         self.patches.is_empty()
+    }
+
+    pub fn change_at(&self, region_id: &RegionId, position: BlockPosition) -> Option<&BlockChange> {
+        let chunk_pos = ChunkPosition::from_block_position(position);
+        for patch in &self.patches {
+            if &patch.region_id == region_id && patch.chunk_position == chunk_pos {
+                for change in &patch.changes {
+                    if change.position == position {
+                        return Some(change);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn inverse(&self) -> Self {
+        let patches = self
+            .patches
+            .iter()
+            .map(|patch| Patch {
+                region_id: patch.region_id.clone(),
+                chunk_position: patch.chunk_position,
+                changes: patch
+                    .changes
+                    .iter()
+                    .map(|c| BlockChange::new(c.position, c.after, c.before))
+                    .collect(),
+            })
+            .collect();
+        Self {
+            patches,
+            palette_additions: Vec::new(),
+        }
     }
 
     pub fn apply(&self, document: &mut Document) -> Result<(), PatchError> {
@@ -172,6 +206,7 @@ impl PatchSet {
                     .map_err(PatchError::RegionBlock)?;
             }
         }
+        document.increment_revision();
         Ok(())
     }
 

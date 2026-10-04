@@ -241,6 +241,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "schematic-analysis"
+version = "0.1.0"
+dependencies = [
+ "schematic-core",
+]
+
+[[package]]
 name = "schematic-core"
 version = "0.1.0"
 dependencies = [
@@ -252,6 +259,7 @@ name = "schematic-edit"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "schematic-analysis",
  "schematic-core",
 ]
 

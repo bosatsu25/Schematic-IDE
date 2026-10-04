@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 schematic-core = { path = "../schematic-core" }
+schematic-analysis = { path = "../schematic-analysis" }
 
 [dev-dependencies]
 proptest = "1"

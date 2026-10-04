@@ -5,7 +5,8 @@ members = [
   "crates/schematic-format",
   "crates/schematic-edit",
   "crates/schematic-validate",
-  "crates/schematic-wasm"
+  "crates/schematic-wasm",
+  "crates/schematic-analysis"
 ]
 
 [workspace.package]

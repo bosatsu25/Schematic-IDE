@@ -214,7 +214,7 @@ fn visit_selected_blocks_dense(
     Ok(())
 }
 
-fn planned_palette_index(
+pub(crate) fn planned_palette_index(
     region: &Region,
     state: &BlockState,
 ) -> Result<(PaletteIndex, Option<(PaletteIndex, BlockState)>), EditError> {

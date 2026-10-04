@@ -1,8 +1,10 @@
 pub mod session;
 
 pub use session::{
-    CleanupRequest, DocumentSummary, HistorySummary, PreviewDiff, PreviewSummary, RegionMeshData,
-    RegionSummary, ReplaceRequest, SelectionBounds, Session, SessionStatus,
+    BlockInspection, BlockInspectionRequest, CleanupRequest, Diagnostic, DiagnosticSeverity,
+    DocumentInspection, DocumentMetadataInspection, DocumentSummary, Fixability, HistorySummary,
+    PreviewDiff, PreviewSummary, RegionInspectionSummary, RegionMeshData, RegionSummary,
+    ReplaceRequest, SelectionBounds, Session, SessionStatus,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -234,6 +236,65 @@ mod wasm_exports {
             let status = session.get_status();
             session.set_json_response(&status);
             0
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_inspect_block(ptr: *const u8, len: usize) -> i32 {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let req: BlockInspectionRequest = match serde_json::from_slice(slice) {
+            Ok(r) => r,
+            Err(e) => {
+                SESSION.with(|s| s.borrow_mut().set_error_response(&e.to_string()));
+                return -1;
+            }
+        };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.inspect_block(&req) {
+                Ok(inspection) => {
+                    session.set_json_response(&inspection);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_inspect_document() -> i32 {
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.inspect_document() {
+                Ok(inspection) => {
+                    session.set_json_response(&inspection);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_validate_document() -> i32 {
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.validate_document() {
+                Ok(diagnostics) => {
+                    session.set_json_response(&diagnostics);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
         })
     }
 }

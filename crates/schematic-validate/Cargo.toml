@@ -9,3 +9,6 @@ name = "schematic_validate"
 path = "src/lib.rs"
 
 [dependencies]
+schematic-core = { path = "../schematic-core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

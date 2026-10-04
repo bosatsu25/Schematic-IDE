@@ -66,6 +66,57 @@ export interface SessionStatus {
   is_dirty: boolean;
 }
 
+export type DiagnosticSeverity = 'Error' | 'Warning' | 'Info';
+export type Fixability = 'None' | 'Manual' | 'Automatic';
+
+export interface Diagnostic {
+  severity: DiagnosticSeverity;
+  code: string;
+  message: string;
+  region?: string;
+  position?: [number, number, number];
+  fixability: Fixability;
+}
+
+export interface BlockInspectionRequest {
+  region_id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface BlockInspection {
+  region_id: string;
+  local_position: [number, number, number];
+  world_position: [number, number, number];
+  block_id: string;
+  properties: Record<string, string>;
+  palette_index: number;
+  block_entity?: unknown;
+}
+
+export interface DocumentInspection {
+  metadata: {
+    name?: string;
+    author?: string;
+    description?: string;
+    minecraft_data_version: number;
+    version: number;
+  };
+  regions: {
+    name: string;
+    origin: [number, number, number];
+    size: [number, number, number];
+    palette_size: number;
+    non_air_blocks: number;
+    block_entity_count: number;
+    entity_count: number;
+  }[];
+  total_entities: number;
+  total_block_entities: number;
+  raw_nbt_keys: string[];
+}
+
 interface WasmExports {
   memory: WebAssembly.Memory;
   wasm_alloc(size: number): number;
@@ -83,6 +134,9 @@ interface WasmExports {
   schematic_redo(): number;
   schematic_export_litematic(): number;
   schematic_get_status(): number;
+  schematic_inspect_block(ptr: number, len: number): number;
+  schematic_inspect_document(): number;
+  schematic_validate_document(): number;
 }
 
 export class SchematicEngine {
@@ -181,6 +235,24 @@ export class SchematicEngine {
   getStatus(): SessionStatus {
     const code = this.exports.schematic_get_status();
     return this.handleJsonResponse<SessionStatus>(code);
+  }
+
+  inspectBlock(req: BlockInspectionRequest): BlockInspection | null {
+    const bytes = this.textEncoder.encode(JSON.stringify(req));
+    const code = this.callWithBytes(bytes, (ptr, len) =>
+      this.exports.schematic_inspect_block(ptr, len),
+    );
+    return this.handleJsonResponse<BlockInspection | null>(code);
+  }
+
+  inspectDocument(): DocumentInspection {
+    const code = this.exports.schematic_inspect_document();
+    return this.handleJsonResponse<DocumentInspection>(code);
+  }
+
+  validateDocument(): Diagnostic[] {
+    const code = this.exports.schematic_validate_document();
+    return this.handleJsonResponse<Diagnostic[]>(code);
   }
 
   private callWithBytes(

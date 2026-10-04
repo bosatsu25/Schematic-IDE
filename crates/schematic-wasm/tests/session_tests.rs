@@ -160,3 +160,42 @@ fn test_wasm_session_full_lifecycle() {
     assert_eq!(summary2.regions.len(), 1);
     // Verified roundtrip!
 }
+
+#[test]
+fn test_inspect_and_validate_session() {
+    let raw_bytes = create_sample_litematic();
+    let mut session = Session::new();
+    session.load_litematic(&raw_bytes).expect("load litematic");
+
+    // 1. Inspect block at (0, 1, 1) -> minecraft:stone
+    let req = schematic_wasm::BlockInspectionRequest {
+        region_id: "MainRegion".to_string(),
+        x: 0,
+        y: 1,
+        z: 1,
+    };
+    let inspection = session
+        .inspect_block(&req)
+        .expect("inspect block")
+        .expect("block exists");
+    assert_eq!(inspection.block_id, "minecraft:stone");
+    assert_eq!(inspection.local_position, [0, 1, 1]);
+    assert_eq!(inspection.world_position, [0, 1, 1]);
+
+    // 2. Inspect document
+    let doc_inspect = session.inspect_document().expect("inspect document");
+    assert_eq!(
+        doc_inspect.metadata.name,
+        Some("WasmTestSchematic".to_string())
+    );
+    assert_eq!(doc_inspect.regions.len(), 1);
+    assert_eq!(doc_inspect.regions[0].name, "MainRegion");
+
+    // 3. Validate document
+    let diagnostics = session.validate_document().expect("validate document");
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.severity == schematic_wasm::DiagnosticSeverity::Error)
+        .collect();
+    assert!(errors.is_empty(), "Expected no errors in sample document");
+}

@@ -1,5 +1,5 @@
-import React from 'react';
-import { useSchematicStore } from '../store/schematicStore';
+import React, { useState } from 'react';
+import { useSchematicStore, SidebarTab } from '../store/schematicStore';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -10,7 +10,21 @@ export const Sidebar: React.FC = () => {
     selection,
     setSelection,
     selectAllRegion,
+    activeTab,
+    setActiveTab,
+    inspection,
+    docInspection,
+    diagnostics,
+    inspectBlock,
+    validateDocument,
+    selectDiagnosticPosition,
   } = useSchematicStore();
+
+  const [inspectCoords, setInspectCoords] = useState<{ x: number; y: number; z: number }>({
+    x: 0,
+    y: 0,
+    z: 0,
+  });
 
   if (!document) {
     return (
@@ -49,144 +63,408 @@ export const Sidebar: React.FC = () => {
     setSelection(updated);
   };
 
+  const handleInspectSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    inspectBlock(inspectCoords.x, inspectCoords.y, inspectCoords.z);
+  };
+
+  const errorCount = diagnostics.filter((d) => d.severity === 'Error').length;
+  const warningCount = diagnostics.filter((d) => d.severity === 'Warning').length;
+
   return (
     <aside className="sidebar" data-testid="sidebar">
-      {/* Regions panel */}
-      <div className="panel">
-        <h3>Regions</h3>
-        <select
-          className="select-input"
-          data-testid="region-selector"
-          value={selectedRegionId || ''}
-          onChange={(e) => selectRegion(e.target.value)}
+      {/* Tab Navigation */}
+      <div className="sidebar-tabs" data-testid="sidebar-tabs">
+        <button
+          className={`sidebar-tab-btn ${activeTab === 'regions' ? 'active' : ''}`}
+          data-testid="tab-regions"
+          onClick={() => setActiveTab('regions')}
         >
-          {document.regions.map((reg) => (
-            <option key={reg.name} value={reg.name}>
-              {reg.name} ({reg.size[0]}×{reg.size[1]}×{reg.size[2]})
-            </option>
-          ))}
-        </select>
+          Regions
+        </button>
+        <button
+          className={`sidebar-tab-btn ${activeTab === 'inspector' ? 'active' : ''}`}
+          data-testid="tab-inspector"
+          onClick={() => setActiveTab('inspector')}
+        >
+          Inspector
+        </button>
+        <button
+          className={`sidebar-tab-btn ${activeTab === 'problems' ? 'active' : ''}`}
+          data-testid="tab-problems"
+          onClick={() => setActiveTab('problems')}
+        >
+          Problems
+          {diagnostics.length > 0 && (
+            <span
+              className={`tab-badge ${errorCount > 0 ? 'badge-error' : 'badge-warning'}`}
+              data-testid="problems-badge"
+            >
+              {diagnostics.length}
+            </span>
+          )}
+        </button>
+      </div>
 
-        {currentRegion && (
-          <div className="region-info" data-testid="region-info">
-            <div className="info-row">
-              <span>Origin:</span>
-              <span>
-                ({currentRegion.origin[0]}, {currentRegion.origin[1]},{' '}
-                {currentRegion.origin[2]})
-              </span>
+      {/* TAB 1: REGIONS & SELECTION */}
+      {activeTab === 'regions' && (
+        <>
+          <div className="panel">
+            <h3>Regions</h3>
+            <select
+              className="select-input"
+              data-testid="region-selector"
+              value={selectedRegionId || ''}
+              onChange={(e) => selectRegion(e.target.value)}
+            >
+              {document.regions.map((reg) => (
+                <option key={reg.name} value={reg.name}>
+                  {reg.name} ({reg.size[0]}×{reg.size[1]}×{reg.size[2]})
+                </option>
+              ))}
+            </select>
+
+            {currentRegion && (
+              <div className="region-info" data-testid="region-info">
+                <div className="info-row">
+                  <span>Origin:</span>
+                  <span>
+                    ({currentRegion.origin[0]}, {currentRegion.origin[1]},{' '}
+                    {currentRegion.origin[2]})
+                  </span>
+                </div>
+                <div className="info-row">
+                  <span>Dimensions:</span>
+                  <span>
+                    {currentRegion.size[0]} × {currentRegion.size[1]} ×{' '}
+                    {currentRegion.size[2]}
+                  </span>
+                </div>
+                <div className="info-row">
+                  <span>Non-Air Blocks:</span>
+                  <span data-testid="region-block-count">{currentRegion.non_air_blocks}</span>
+                </div>
+                <div className="info-row">
+                  <span>Palette Count:</span>
+                  <span>{currentRegion.palette.length}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="panel">
+            <h3>Selection Box</h3>
+            <div className="selection-actions">
+              <button
+                className="btn btn-sm"
+                data-testid="select-all-btn"
+                onClick={selectAllRegion}
+              >
+                Select All
+              </button>
+              <button
+                className="btn btn-sm"
+                data-testid="clear-selection-btn"
+                onClick={() => setSelection(null)}
+                disabled={!selection}
+              >
+                Clear
+              </button>
             </div>
-            <div className="info-row">
-              <span>Dimensions:</span>
-              <span>
-                {currentRegion.size[0]} × {currentRegion.size[1]} ×{' '}
-                {currentRegion.size[2]}
-              </span>
-            </div>
-            <div className="info-row">
-              <span>Non-Air Blocks:</span>
-              <span data-testid="region-block-count">{currentRegion.non_air_blocks}</span>
-            </div>
-            <div className="info-row">
-              <span>Palette Count:</span>
-              <span>{currentRegion.palette.length}</span>
+
+            <div className="coord-grid">
+              <span className="coord-header">Corner</span>
+              <span className="coord-header">X</span>
+              <span className="coord-header">Y</span>
+              <span className="coord-header">Z</span>
+
+              <span className="coord-label">Min:</span>
+              <input
+                type="number"
+                className="coord-input"
+                data-testid="sel-min-x"
+                value={selection?.min[0] ?? ''}
+                placeholder={meshData ? String(meshData.origin[0]) : '0'}
+                onChange={(e) => handleCoordChange('min', 0, parseInt(e.target.value, 10))}
+              />
+              <input
+                type="number"
+                className="coord-input"
+                data-testid="sel-min-y"
+                value={selection?.min[1] ?? ''}
+                placeholder={meshData ? String(meshData.origin[1]) : '0'}
+                onChange={(e) => handleCoordChange('min', 1, parseInt(e.target.value, 10))}
+              />
+              <input
+                type="number"
+                className="coord-input"
+                data-testid="sel-min-z"
+                value={selection?.min[2] ?? ''}
+                placeholder={meshData ? String(meshData.origin[2]) : '0'}
+                onChange={(e) => handleCoordChange('min', 2, parseInt(e.target.value, 10))}
+              />
+
+              <span className="coord-label">Max:</span>
+              <input
+                type="number"
+                className="coord-input"
+                data-testid="sel-max-x"
+                value={selection?.max[0] ?? ''}
+                placeholder={
+                  meshData
+                    ? String(meshData.origin[0] + meshData.size[0] - 1)
+                    : '15'
+                }
+                onChange={(e) => handleCoordChange('max', 0, parseInt(e.target.value, 10))}
+              />
+              <input
+                type="number"
+                className="coord-input"
+                data-testid="sel-max-y"
+                value={selection?.max[1] ?? ''}
+                placeholder={
+                  meshData
+                    ? String(meshData.origin[1] + meshData.size[1] - 1)
+                    : '15'
+                }
+                onChange={(e) => handleCoordChange('max', 1, parseInt(e.target.value, 10))}
+              />
+              <input
+                type="number"
+                className="coord-input"
+                data-testid="sel-max-z"
+                value={selection?.max[2] ?? ''}
+                placeholder={
+                  meshData
+                    ? String(meshData.origin[2] + meshData.size[2] - 1)
+                    : '15'
+                }
+                onChange={(e) => handleCoordChange('max', 2, parseInt(e.target.value, 10))}
+              />
             </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
 
-      {/* Selection Box panel */}
-      <div className="panel">
-        <h3>Selection Box</h3>
-        <div className="selection-actions">
-          <button
-            className="btn btn-sm"
-            data-testid="select-all-btn"
-            onClick={selectAllRegion}
-          >
-            Select All
-          </button>
-          <button
-            className="btn btn-sm"
-            data-testid="clear-selection-btn"
-            onClick={() => setSelection(null)}
-            disabled={!selection}
-          >
-            Clear
-          </button>
+      {/* TAB 2: INSPECTOR */}
+      {activeTab === 'inspector' && (
+        <>
+          <div className="panel" data-testid="inspector-panel">
+            <h3>Block Inspector</h3>
+            <form onSubmit={handleInspectSubmit} className="inspect-form">
+              <div className="inspect-inputs">
+                <label>
+                  X:
+                  <input
+                    type="number"
+                    className="coord-input-sm"
+                    data-testid="inspect-input-x"
+                    value={inspectCoords.x}
+                    onChange={(e) =>
+                      setInspectCoords({ ...inspectCoords, x: parseInt(e.target.value, 10) || 0 })
+                    }
+                  />
+                </label>
+                <label>
+                  Y:
+                  <input
+                    type="number"
+                    className="coord-input-sm"
+                    data-testid="inspect-input-y"
+                    value={inspectCoords.y}
+                    onChange={(e) =>
+                      setInspectCoords({ ...inspectCoords, y: parseInt(e.target.value, 10) || 0 })
+                    }
+                  />
+                </label>
+                <label>
+                  Z:
+                  <input
+                    type="number"
+                    className="coord-input-sm"
+                    data-testid="inspect-input-z"
+                    value={inspectCoords.z}
+                    onChange={(e) =>
+                      setInspectCoords({ ...inspectCoords, z: parseInt(e.target.value, 10) || 0 })
+                    }
+                  />
+                </label>
+              </div>
+              <button type="submit" className="btn btn-sm btn-primary" data-testid="inspect-btn">
+                Inspect Coordinate
+              </button>
+            </form>
+
+            {inspection ? (
+              <div className="inspection-result" data-testid="block-inspection-details">
+                <div className="info-row">
+                  <span className="info-label">Block ID:</span>
+                  <span className="info-val font-mono" data-testid="inspect-block-id">
+                    {inspection.block_id}
+                  </span>
+                </div>
+                <div className="info-row">
+                  <span className="info-label">Palette Index:</span>
+                  <span className="info-val">#{inspection.palette_index}</span>
+                </div>
+                <div className="info-row">
+                  <span className="info-label">Local Pos:</span>
+                  <span className="info-val font-mono">
+                    ({inspection.local_position[0]}, {inspection.local_position[1]},{' '}
+                    {inspection.local_position[2]})
+                  </span>
+                </div>
+                <div className="info-row">
+                  <span className="info-label">World Pos:</span>
+                  <span className="info-val font-mono">
+                    ({inspection.world_position[0]}, {inspection.world_position[1]},{' '}
+                    {inspection.world_position[2]})
+                  </span>
+                </div>
+
+                {/* BlockState Properties */}
+                <div className="property-section">
+                  <h4>Properties</h4>
+                  {Object.keys(inspection.properties).length === 0 ? (
+                    <p className="text-muted text-sm">No state properties</p>
+                  ) : (
+                    <table className="props-table" data-testid="inspect-properties-table">
+                      <thead>
+                        <tr>
+                          <th>Property</th>
+                          <th>Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(inspection.properties).map(([k, v]) => (
+                          <tr key={k}>
+                            <td className="prop-name font-mono">{k}</td>
+                            <td className="prop-val font-mono">{v}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Block Entity NBT */}
+                {inspection.block_entity ? (
+                  <div className="nbt-section" data-testid="inspect-block-entity">
+                    <h4>Block Entity NBT</h4>
+                    <pre className="nbt-json">
+                      {JSON.stringify(inspection.block_entity, null, 2)}
+                    </pre>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-muted text-sm mt-2">
+                Enter coordinates above to inspect a block state in the active region.
+              </p>
+            )}
+          </div>
+
+          {/* Document & Preserved NBT Inspection */}
+          <div className="panel" data-testid="doc-inspection-panel">
+            <h3>Document & Metadata</h3>
+            {docInspection ? (
+              <div className="doc-inspection-details">
+                <div className="info-row">
+                  <span className="info-label">Name:</span>
+                  <span className="info-val">{docInspection.metadata.name || 'Untitled'}</span>
+                </div>
+                <div className="info-row">
+                  <span className="info-label">Author:</span>
+                  <span className="info-val">{docInspection.metadata.author || 'Anonymous'}</span>
+                </div>
+                <div className="info-row">
+                  <span className="info-label">DataVersion:</span>
+                  <span className="info-val">{docInspection.metadata.minecraft_data_version}</span>
+                </div>
+                <div className="info-row">
+                  <span className="info-label">Block Entities:</span>
+                  <span className="info-val">{docInspection.total_block_entities}</span>
+                </div>
+                <div className="info-row">
+                  <span className="info-label">Entities:</span>
+                  <span className="info-val">{docInspection.total_entities}</span>
+                </div>
+
+                {docInspection.raw_nbt_keys.length > 0 && (
+                  <div className="raw-nbt-keys-section">
+                    <h4>Preserved NBT Keys</h4>
+                    <div className="keys-badges">
+                      {docInspection.raw_nbt_keys.map((key) => (
+                        <span key={key} className="key-badge">
+                          {key}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-muted text-sm">No inspection metadata available.</p>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* TAB 3: PROBLEMS PANEL */}
+      {activeTab === 'problems' && (
+        <div className="panel" data-testid="problems-panel">
+          <div className="problems-header">
+            <h3>Diagnostics ({diagnostics.length})</h3>
+            <button
+              className="btn btn-xs"
+              data-testid="revalidate-btn"
+              onClick={() => validateDocument()}
+            >
+              Revalidate
+            </button>
+          </div>
+
+          <div className="problems-summary">
+            <span className="summary-pill badge-error">{errorCount} Errors</span>
+            <span className="summary-pill badge-warning">{warningCount} Warnings</span>
+            <span className="summary-pill badge-info">
+              {diagnostics.length - errorCount - warningCount} Info
+            </span>
+          </div>
+
+          {diagnostics.length === 0 ? (
+            <div className="empty-problems" data-testid="no-problems">
+              <p className="text-success">✓ No validation issues detected.</p>
+            </div>
+          ) : (
+            <div className="problems-list" data-testid="diagnostics-list">
+              {diagnostics.map((d, i) => (
+                <div
+                  key={`${d.code}-${i}`}
+                  className={`problem-item severity-${d.severity.toLowerCase()}`}
+                  data-testid={`problem-item-${i}`}
+                  onClick={() => selectDiagnosticPosition(d)}
+                >
+                  <div className="problem-title">
+                    <span className={`severity-badge badge-${d.severity.toLowerCase()}`}>
+                      {d.severity}
+                    </span>
+                    <span className="problem-code font-mono">{d.code}</span>
+                    <span className="fixability-badge">{d.fixability}</span>
+                  </div>
+                  <p className="problem-msg">{d.message}</p>
+                  {d.position && (
+                    <div className="problem-pos font-mono">
+                      Pos: ({d.position[0]}, {d.position[1]}, {d.position[2]})
+                      {d.region ? ` in ${d.region}` : ''}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-
-        <div className="coord-grid">
-          <span className="coord-header">Corner</span>
-          <span className="coord-header">X</span>
-          <span className="coord-header">Y</span>
-          <span className="coord-header">Z</span>
-
-          <span className="coord-label">Min:</span>
-          <input
-            type="number"
-            className="coord-input"
-            data-testid="sel-min-x"
-            value={selection?.min[0] ?? ''}
-            placeholder={meshData ? String(meshData.origin[0]) : '0'}
-            onChange={(e) => handleCoordChange('min', 0, parseInt(e.target.value, 10))}
-          />
-          <input
-            type="number"
-            className="coord-input"
-            data-testid="sel-min-y"
-            value={selection?.min[1] ?? ''}
-            placeholder={meshData ? String(meshData.origin[1]) : '0'}
-            onChange={(e) => handleCoordChange('min', 1, parseInt(e.target.value, 10))}
-          />
-          <input
-            type="number"
-            className="coord-input"
-            data-testid="sel-min-z"
-            value={selection?.min[2] ?? ''}
-            placeholder={meshData ? String(meshData.origin[2]) : '0'}
-            onChange={(e) => handleCoordChange('min', 2, parseInt(e.target.value, 10))}
-          />
-
-          <span className="coord-label">Max:</span>
-          <input
-            type="number"
-            className="coord-input"
-            data-testid="sel-max-x"
-            value={selection?.max[0] ?? ''}
-            placeholder={
-              meshData
-                ? String(meshData.origin[0] + meshData.size[0] - 1)
-                : '15'
-            }
-            onChange={(e) => handleCoordChange('max', 0, parseInt(e.target.value, 10))}
-          />
-          <input
-            type="number"
-            className="coord-input"
-            data-testid="sel-max-y"
-            value={selection?.max[1] ?? ''}
-            placeholder={
-              meshData
-                ? String(meshData.origin[1] + meshData.size[1] - 1)
-                : '15'
-            }
-            onChange={(e) => handleCoordChange('max', 1, parseInt(e.target.value, 10))}
-          />
-          <input
-            type="number"
-            className="coord-input"
-            data-testid="sel-max-z"
-            value={selection?.max[2] ?? ''}
-            placeholder={
-              meshData
-                ? String(meshData.origin[2] + meshData.size[2] - 1)
-                : '15'
-            }
-            onChange={(e) => handleCoordChange('max', 2, parseInt(e.target.value, 10))}
-          />
-        </div>
-      </div>
+      )}
     </aside>
   );
 };

@@ -321,6 +321,11 @@ dependencies = [
 [[package]]
 name = "schematic-validate"
 version = "0.1.0"
+dependencies = [
+ "schematic-core",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "schematic-wasm"
@@ -330,6 +335,7 @@ dependencies = [
  "schematic-core",
  "schematic-edit",
  "schematic-format",
+ "schematic-validate",
  "serde",
  "serde_json",
 ]

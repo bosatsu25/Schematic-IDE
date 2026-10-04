@@ -102,4 +102,29 @@ describe('SchematicEngine WASM wrapper', () => {
       expect(summary2.regions[0].name).toBe('MainRegion');
     });
   });
+
+  it('inspects block, document, and validates document diagnostics', () => {
+    // 1. Inspect block
+    const block = engine.inspectBlock({
+      region_id: 'MainRegion',
+      x: 0,
+      y: 1,
+      z: 1,
+    });
+    expect(block).toBeDefined();
+    expect(block?.block_id).toBe('minecraft:granite'); // because replace was redone!
+    expect(block?.local_position).toEqual([0, 1, 1]);
+
+    // 2. Inspect document
+    const doc = engine.inspectDocument();
+    expect(doc.metadata.name).toBe('WasmTestSchematic');
+    expect(doc.regions.length).toBe(1);
+    expect(doc.regions[0].palette_size).toBeGreaterThanOrEqual(2);
+
+    // 3. Validate document
+    const diags = engine.validateDocument();
+    expect(Array.isArray(diags)).toBe(true);
+    const errors = diags.filter((d) => d.severity === 'Error');
+    expect(errors.length).toBe(0);
+  });
 });

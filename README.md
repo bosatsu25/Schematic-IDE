@@ -11,13 +11,16 @@ A local-first, browser-based IDE for Minecraft structures.
   - Three.js voxel renderer with instanced mesh rendering and deterministic color mapping.
   - Interactive browser editor shell with viewport, region selection, bounded replacement, and VoxelWeave cleanup.
   - Playwright browser E2E test verifying the complete `.litematic` editing lifecycle in CI.
-- **Phase 8+ In Progress (v1.0 Completion)**:
+- **v1.0 Complete (Waves 8A–8G)**:
   - **Wave 8A**: Inspector & Diagnostics (`schematic-validate`, Diagnostic domain, Problems panel).
-  - **Wave 8B**: Structural Editing (Fill, Copy/Paste, Move, Rotate, Mirror with directional blockstate transforms).
-  - **Wave 8C**: Canonical Structural Diff & 3D diff overlay.
-  - **Wave 8D**: Multi-format adapters (Sponge `.schem`, Java Structure `.nbt`).
-  - **Wave 8E**: Material list & structural analysis UI.
-  - **Wave 8F/8G**: Performance benchmarks (1M–10M block scale) & PWA offline application shell.
+  - **Wave 8B**: Structural Editing (Fill, Copy/Paste, Move, Rotate, Mirror with directional blockstate transforms and proptests).
+  - **Wave 8C**: Canonical Structural Diff & 3D diff overlay (Added, Removed, Modified).
+  - **Wave 8D**: Multi-format adapters (Sponge `.schem`, Java Structure `.nbt`, cross-format diff).
+  - **Wave 8E**: Material aggregation table, 64-item stack calculation, structural metrics, and CSV export.
+  - **Wave 8F**: Performance benchmarks at 1M, 5M, and 10M block scale (`docs/benchmarks.md`).
+  - **Wave 8G**: PWA deployment, Web App Manifest, offline service worker shell (`sw.js`), and installable icons.
+- **Phase 9+ (Future Roadmap)**:
+  - Surface relax / smoothing, procedural gradients, dithering, and 3D model importer integrations (see [docs/roadmap.md](./docs/roadmap.md)).
 
 ## Repository structure
 

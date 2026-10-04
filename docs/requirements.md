@@ -23,7 +23,7 @@ This repository intentionally avoids copying another implementation's source cod
 
 See [docs/v1-gap-analysis.md](./v1-gap-analysis.md) for detailed item-by-item status, evidence, and remaining deliverables.
 
-- [PARTIAL] **Web/PWA app launches locally in browser**: Local Web app launches and runs in browser; PWA manifest and offline service worker caching to be completed in Wave 8G.
+- [DONE] **Web/PWA app launches locally in browser**: Local Web app launches and runs in browser; PWA manifest, installable icons, and offline service worker caching shell verified (Wave 8G).
 - [DONE] **Supports `.litematic`, `.schem`, and Java Structure NBT**: All three formats supported with lossless parse/export, cross-format diff, and auto-detection (PR #7, PR #16).
 - [DONE] **Enables open, view, select, fill, replace, delete, copy, paste, move, rotate, mirror, undo, redo, inspect, analyze, validate, diff, and export**:
   - Open, view, select, replace, delete, undo, redo, cleanup analysis, export, inspect, validate: **DONE**

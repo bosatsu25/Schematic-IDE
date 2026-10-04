@@ -1,65 +1,115 @@
 # Roadmap
 
-## Reconciled status
+## Reconciled Status
 
-- Phase 0 is complete and merged to `main`.
-- Phase 1 quality gates were already present in the Phase 0 baseline; no second
-  quality-gates implementation is needed.
-- Playwright is not configured. Browser E2E scaffolding is deferred until a
-  browser workflow exists in the first vertical slice, avoiding a placeholder
-  browser test setup without behavior to exercise.
-- Phase 2 — Core Domain is complete and merged.
-- The current implementation branch is Phase 3 — Edit Engine.
+- **Phase 0 — Product / Architecture Baseline**: Complete (PR #1).
+- **Phase 1 — Workspace & Quality Gates**: Complete (PR #1, PR #11).
+- **Phase 2 — Core Domain (`schematic-core`)**: Complete (PR #2, PR #5).
+- **Phase 3 — Edit Engine (`schematic-edit`)**: Complete (PR #4, PR #5, PR #6).
+- **Phase 4 — Litematic Format Adapter (`schematic-format`)**: Complete (PR #7).
+- **Phase 5 — WASM Session Boundary (`schematic-wasm`)**: Complete (PR #8).
+- **Phase 6 — Three.js Renderer (`@schematic-ide/renderer`)**: Complete (PR #10).
+- **Phase 7 — First Vertical Slice & E2E (`apps/web` & Playwright)**: Complete (PR #10, PR #11).
+- **Phase 8+ — IDE Hardening & v1.0 Completion**: In progress.
 
-## Phase 0 — Product / Architecture Baseline
+---
 
-**Complete.** Establish repository structure, design documentation, and
-clean-room architecture guardrails.
+## Completed Phases
 
-## Phase 1 — Workspace & Quality Gates
+### Phase 0 — Product / Architecture Baseline
+**Complete.** Repository structure, architecture specifications, clean-room principles, and ADRs established.
 
-**Complete in Phase 0.** The repository already contains:
+### Phase 1 — Workspace & Quality Gates
+**Complete.** Cargo + pnpm workspaces, strict TypeScript, ESLint, Vitest, Rust clippy/fmt/test in GitHub Actions, and Playwright E2E browser test harness.
 
-- pnpm and Cargo workspaces
-- React + Vite, strict TypeScript, ESLint, and Vitest
-- frontend lint, typecheck, test, and build scripts
-- Rust format, clippy, and test checks in GitHub Actions
-- a GitHub Actions workflow running all of those checks
+### Phase 2 — Core Domain (`schematic-core`)
+**Complete.** Format-independent domain model, chunk-oriented block storage, coordinates, Selection/SelectionBox multi-box unions, and palette identity.
 
-Rust formatting is enforced by `cargo fmt --check`; there is no separate
-frontend formatter command (frontend code is covered by ESLint). Playwright
-browser E2E setup remains intentionally deferred as described above.
+### Phase 3 — Edit Engine (`schematic-edit`)
+**Complete.** Patch-based command history (PatchSet), undo/redo, bounded replacement, EditWorkspace, revision tokens for stale prevention, and VoxelWeave conservative island cleanup integration.
 
-## Phase 2 — schematic-core
+### Phase 4 — Litematic Format (`schematic-format`)
+**Complete.** Pure Rust NBT parser and serializer, continuous 64-bit bit-packing/unpacking, negative-size bounds normalization, and lossless preservation of unknown tags, block entities, and entities.
 
-**Complete.**
+### Phase 5 — WASM Boundary (`schematic-wasm`)
+**Complete.** Session C-ABI, allocation/deallocation boundary, thread-local response buffers, Web Worker wrapper, and typed TypeScript worker client.
 
-Implement a format-independent domain model, coordinate semantics, selection
-logic, palette identity, and internal chunk organization. No parser, WASM,
-renderer, or web dependency belongs in this phase.
+### Phase 6 — Renderer Foundation (`@schematic-ide/renderer`)
+**Complete.** Three.js instanced mesh voxel renderer, chunked updates, bounding box overlays, and deterministic block state palette coloring.
 
-## Phase 3 — Edit Engine
+### Phase 7 — First Vertical Slice (`apps/web` & E2E)
+**Complete.** Interactive editor UI with viewport, selection controls, replace tool, VoxelWeave cleanup tool, before/after preview, and Playwright E2E browser tests passing on Chromium in CI.
 
-Implement patch-based command history and undo/redo operations for structural
-edits. Commands produce per-region, per-storage-chunk patches; history stores
-only those patches, never document snapshots.
+---
 
-## Phase 4 — Litematic Format
+## Phase 8+ — IDE Hardening & v1.0 Completion
 
-Add format adapter support for `.litematic`, metadata preservation, and round-trip fixtures.
+### Wave 8A — Inspector & Diagnostics
+- **`schematic-validate` crate implementation**:
+  - Diagnostic domain model: `Diagnostic { severity, code, message, region, position, fixability }`.
+  - Core validation rules: out-of-bounds blocks, palette index corruption, malformed metadata, block entity misalignment, duplicate regions.
+- **IDE Inspection UI**:
+  - Active region details, selected block position, block ID, block state properties, palette entry, block entity NBT details, document metadata.
+- **Problems Panel**:
+  - Filterable list of validation diagnostics with position links and severity badges.
 
-## Phase 5 — WASM Boundary
+### Wave 8B — Structural Editing
+- **Advanced Editing Operations**:
+  - **Fill**: Fill selected region/boxes with specified block state.
+  - **Copy / Paste**: Region-relative clipboard capturing blocks, block states, and block entities with safe translation.
+  - **Move**: Cut selection and translate with full undo/redo.
+  - **Rotate**: 90/180/270 degree rotation around Y axis with directional blockstate property transformation (facing, axis, shape, half, rotation).
+  - **Mirror**: X and Z axis flipping with orientation property updates.
+- **Correctness & Tests**:
+  - Invertibility tests (4x 90° rotate = identity, 2x mirror = identity).
+  - Property-based tests for directional Minecraft block states.
 
-Expose core operations through WASM and web workers for safe large-file processing.
+### Wave 8C — Canonical Structural Diff
+- **Structural Diff Engine**:
+  - Comparison between two Documents or two Regions in canonical domain.
+  - Categories: Added, Removed, Changed, Unchanged.
+  - Compares block state IDs, properties, and block entities.
+- **3D Diff Visualizer**:
+  - Color-coded overlay in Three.js renderer (Green = Added, Red = Removed, Amber = Changed).
+  - Diff summary and change list in the web UI.
 
-## Phase 6 — Renderer Foundation
+### Wave 8D — Multi-format Adapters
+- **Sponge `.schem` Adapter**:
+  - Schematic v2/v3 support, varint block data, metadata, palettes, block entities, entities.
+- **Java Structure `.nbt` Adapter**:
+  - Vanilla structure NBT format, size array, palette, block entries with pos and state index.
+- **Lossless Inter-format Round-trip**:
+  - Round-trip tests and explicit warnings / conversion rejection for unsupported cross-format features (no silent data loss).
 
-Build a browser 3D viewport with chunked mesh updates and selection overlays.
+### Wave 8E — Material & Structural Analysis UI
+- **Material List**:
+  - Aggregated block state counts across document, region, and selection.
+  - Searchable and exportable material breakdown.
+- **Structural Statistics**:
+  - Total dimensions, volume, occupied block count, air count, palette size, entity count, block entity count.
+- **Integrated Surface & Feature Analysis**:
+  - Expose `schematic-analysis` metrics to the UI.
 
-## Phase 7 — First Vertical Slice
+### Wave 8F — Performance Hardening
+- **Benchmark Suite**:
+  - Synthetic benchmarks at 1M, 5M, and 10M block scale.
+  - Measure parse latency, memory footprint, mesh build time, edit patch latency, and export time.
+- **Chunked Pipeline Tuning**:
+  - Keep Web Worker message transfers zero-copy where possible and avoid blocking the UI thread.
 
-Deliver the MVP workflow from open → render → edit → undo → save.
+### Wave 8G — PWA & Offline Application Shell
+- **PWA Deployment**:
+  - Web App Manifest (`manifest.json`), service worker for offline asset caching.
+  - Fully local-first guarantee: zero outbound telemetry or backend requirements.
 
-## Phase 8+ — IDE Inspection, Validation, Structural Editing, Diff, Multi-format, Performance
+---
 
-Expand the product into a complete local-first structure IDE with a production-ready PWA deployment pipeline.
+## Phase 9+ — Advanced Features (Future Roadmap)
+
+Features conceived during VoxelWeave research are tracked for Phase 9+ and will not block v1.0:
+
+- Surface Relax / Mesh Smoothing
+- Procedural Gradients & Color Blending
+- Procedural Patterns & Dithering
+- Contour Correction & Edge Aligners
+- ObjToSchematic 3D Model Importer Integration

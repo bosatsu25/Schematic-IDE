@@ -21,16 +21,23 @@ This repository intentionally avoids copying another implementation's source cod
 
 ## v1.0 Definition of Done
 
-- Web/PWA app launches locally in browser
-- Supports `.litematic`, `.schem`, and Java Structure NBT
-- Enables open, view, select, fill, replace, delete, copy, paste, move, rotate, mirror, undo, redo, inspect, analyze, validate, diff, and export
-- Keeps structure data local-first
-- Includes round-trip and property tests
-- Includes E2E coverage for a practical editing workflow
-- Includes large-structure performance tests
-- CI stays green
-- Architecture and README remain aligned with implementation
-- No material silent data-loss issues are introduced
+See [docs/v1-gap-analysis.md](./v1-gap-analysis.md) for detailed item-by-item status, evidence, and remaining deliverables.
+
+- [PARTIAL] **Web/PWA app launches locally in browser**: Local Web app launches and runs in browser; PWA manifest and offline service worker caching to be completed in Wave 8G.
+- [PARTIAL] **Supports `.litematic`, `.schem`, and Java Structure NBT**: `.litematic` is fully supported with lossless parse/export; `.schem` and Java Structure `.nbt` to be completed in Wave 8D.
+- [PARTIAL] **Enables open, view, select, fill, replace, delete, copy, paste, move, rotate, mirror, undo, redo, inspect, analyze, validate, diff, and export**:
+  - Open, view, select, replace, delete, undo, redo, cleanup analysis, export: **DONE**
+  - Fill, copy, paste, move, rotate, mirror: **Wave 8B**
+  - Inspect, validate: **Wave 8A**
+  - Diff: **Wave 8C**
+  - Material & structural analysis: **Wave 8E**
+- [DONE] **Keeps structure data local-first**: Runs entirely in the user's browser client and WASM runtime; zero server upload or telemetry.
+- [PARTIAL] **Includes round-trip and property tests**: `.litematic` round-trip tests and domain tests exist; property-based rotation/mirror inverse tests to be completed in Wave 8B, multi-format round-trip in Wave 8D.
+- [DONE] **Includes E2E coverage for a practical editing workflow**: Playwright E2E browser tests pass on Chromium in CI (PR #11).
+- [NOT STARTED] **Includes large-structure performance tests**: Performance benchmark suite at 1M, 5M, and 10M blocks planned for Wave 8F.
+- [DONE] **CI stays green**: GitHub Actions runs format, clippy, unit tests, frontend checks, and browser E2E tests cleanly on all commits.
+- [DONE] **Architecture and README remain aligned with implementation**: Updated and maintained continuously.
+- [DONE] **No material silent data-loss issues are introduced**: NBT preservation, negative bounds preservation, unknown tag passthrough verified.
 
 ## Non-goals for Phase 0
 

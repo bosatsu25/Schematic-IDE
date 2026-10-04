@@ -931,6 +931,38 @@ impl Session {
             .ok_or_else(|| "No document loaded".to_string())?;
         Ok(core_validate_document(ws.committed()))
     }
+
+    pub fn diff_with_source(&self) -> Result<schematic_diff::DocumentDiff, String> {
+        let ws = self
+            .workspace
+            .as_ref()
+            .ok_or_else(|| "No session active".to_string())?;
+        let orig = self
+            .litematic
+            .as_ref()
+            .ok_or_else(|| "No source document available".to_string())?;
+        Ok(schematic_diff::diff_documents(
+            &orig.document,
+            ws.committed(),
+            false,
+        ))
+    }
+
+    pub fn diff_with_litematic(
+        &self,
+        bytes: &[u8],
+    ) -> Result<schematic_diff::DocumentDiff, String> {
+        let ws = self
+            .workspace
+            .as_ref()
+            .ok_or_else(|| "No session active".to_string())?;
+        let other = LitematicDocument::parse(bytes).map_err(|e| e.to_string())?;
+        Ok(schematic_diff::diff_documents(
+            &other.document,
+            ws.committed(),
+            false,
+        ))
+    }
 }
 
 pub fn nbt_to_json(tag: &NbtTag) -> serde_json::Value {

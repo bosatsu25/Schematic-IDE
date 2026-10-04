@@ -5,6 +5,7 @@ members = [
   "crates/schematic-format",
   "crates/schematic-edit",
   "crates/schematic-validate",
+  "crates/schematic-diff",
   "crates/schematic-wasm",
   "crates/schematic-analysis"
 ]

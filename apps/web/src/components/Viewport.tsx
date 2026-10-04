@@ -5,7 +5,15 @@ import { useSchematicStore } from '../store/schematicStore';
 export const Viewport: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<VoxelRenderer | null>(null);
-  const { meshData, selection, document, loading } = useSchematicStore();
+  const {
+    meshData,
+    selection,
+    document,
+    loading,
+    diffMode,
+    currentDiff,
+    selectedRegionId,
+  } = useSchematicStore();
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -49,6 +57,38 @@ export const Viewport: React.FC = () => {
     if (!rendererRef.current) return;
     rendererRef.current.setSelectionBox(selection);
   }, [selection]);
+
+  // Update diff overlay
+  useEffect(() => {
+    if (!rendererRef.current) return;
+    if (!diffMode || !currentDiff) {
+      rendererRef.current.setDiffOverlay(null);
+      return;
+    }
+
+    const added: [number, number, number][] = [];
+    const removed: [number, number, number][] = [];
+    const modified: [number, number, number][] = [];
+
+    for (const b of currentDiff.block_diffs) {
+      if (selectedRegionId && b.region_id !== selectedRegionId) {
+        continue;
+      }
+      if (b.kind === 'Added') {
+        added.push(b.position);
+      } else if (b.kind === 'Removed') {
+        removed.push(b.position);
+      } else if (b.kind === 'Modified') {
+        modified.push(b.position);
+      }
+    }
+
+    rendererRef.current.setDiffOverlay({
+      added_positions: added,
+      removed_positions: removed,
+      modified_positions: modified,
+    });
+  }, [diffMode, currentDiff, selectedRegionId]);
 
   return (
     <div className="viewport-container" data-testid="viewport-container">

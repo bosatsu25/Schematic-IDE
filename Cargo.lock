@@ -302,6 +302,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "schematic-diff"
+version = "0.1.0"
+dependencies = [
+ "schematic-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "schematic-edit"
 version = "0.1.0"
 dependencies = [
@@ -333,6 +342,7 @@ version = "0.1.0"
 dependencies = [
  "schematic-analysis",
  "schematic-core",
+ "schematic-diff",
  "schematic-edit",
  "schematic-format",
  "schematic-validate",

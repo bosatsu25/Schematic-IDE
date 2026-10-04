@@ -151,6 +151,47 @@ export interface DocumentInspection {
   raw_nbt_keys: string[];
 }
 
+export type DiffKind = 'Added' | 'Removed' | 'Modified' | 'Unchanged';
+
+export interface DiffBlockState {
+  name: string;
+  properties: Record<string, string>;
+}
+
+export interface BlockDiff {
+  region_id: string;
+  position: [number, number, number];
+  local_position: [number, number, number];
+  kind: DiffKind;
+  before?: DiffBlockState | null;
+  after?: DiffBlockState | null;
+}
+
+export interface EntityDiff {
+  position: [number, number, number];
+  kind: DiffKind;
+  before_type?: string | null;
+  after_type?: string | null;
+}
+
+export interface RegionDiffSummary {
+  region_id: string;
+  added_count: number;
+  removed_count: number;
+  modified_count: number;
+  unchanged_count: number;
+}
+
+export interface DocumentDiff {
+  summaries: RegionDiffSummary[];
+  total_added: number;
+  total_removed: number;
+  total_modified: number;
+  total_unchanged: number;
+  block_diffs: BlockDiff[];
+  entity_diffs: EntityDiff[];
+}
+
 interface WasmExports {
   memory: WebAssembly.Memory;
   wasm_alloc(size: number): number;
@@ -177,6 +218,8 @@ interface WasmExports {
   schematic_inspect_block(ptr: number, len: number): number;
   schematic_inspect_document(): number;
   schematic_validate_document(): number;
+  schematic_diff_with_source(): number;
+  schematic_diff_with_litematic(ptr: number, len: number): number;
 }
 
 export class SchematicEngine {
@@ -341,6 +384,18 @@ export class SchematicEngine {
   validateDocument(): Diagnostic[] {
     const code = this.exports.schematic_validate_document();
     return this.handleJsonResponse<Diagnostic[]>(code);
+  }
+
+  diffWithSource(): DocumentDiff {
+    const code = this.exports.schematic_diff_with_source();
+    return this.handleJsonResponse<DocumentDiff>(code);
+  }
+
+  diffWithLitematic(bytes: Uint8Array): DocumentDiff {
+    const code = this.callWithBytes(bytes, (ptr, len) =>
+      this.exports.schematic_diff_with_litematic(ptr, len),
+    );
+    return this.handleJsonResponse<DocumentDiff>(code);
   }
 
   private callWithBytes(

@@ -122,6 +122,19 @@ test.describe('End-to-End Litematic Browser Workflow', () => {
     await page.getByTestId('commit-btn').click();
     await expect(page.getByTestId('preview-panel')).not.toBeVisible();
 
+    // 10.5. Canonical Diff Verification (Wave 8C)
+    await page.getByTestId('tab-diff').click();
+    await expect(page.getByTestId('diff-panel')).toBeVisible();
+    await page.getByTestId('diff-source-btn').click();
+    await expect(page.getByTestId('diff-stats')).toBeVisible();
+    await expect(page.getByTestId('toggle-diff-overlay')).toBeVisible();
+    await page.getByTestId('toggle-diff-overlay').click();
+    await expect(page.getByTestId('toggle-diff-overlay')).toContainText('OFF');
+    await page.getByTestId('toggle-diff-overlay').click();
+    await expect(page.getByTestId('toggle-diff-overlay')).toContainText('ON');
+    // Return to regions tab
+    await page.getByTestId('tab-regions').click();
+
     // 11. Export as .litematic
     const downloadPromise = page.waitForEvent('download');
     await page.getByTestId('export-btn').click();

@@ -9,3 +9,7 @@ name = "schematic_edit"
 path = "src/lib.rs"
 
 [dependencies]
+schematic-core = { path = "../schematic-core" }
+
+[dev-dependencies]
+proptest = "1"

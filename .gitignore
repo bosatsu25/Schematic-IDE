@@ -1,4 +1,4 @@
-﻿# Node
+# Node
 node_modules/
 dist/
 coverage/
@@ -30,6 +30,8 @@ temp/
 # Tooling
 .vite/
 *.tsbuildinfo
+test-results/
+playwright-report/
 
 # Editor
 .vscode/

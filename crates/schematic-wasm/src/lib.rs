@@ -4,11 +4,12 @@ pub use schematic_diff::{
     BlockDiff, DiffBlockState, DiffKind, DocumentDiff, EntityDiff, RegionDiffSummary,
 };
 pub use session::{
-    BlockInspection, BlockInspectionRequest, CleanupRequest, CopyRequest, Diagnostic,
-    DiagnosticSeverity, DocumentInspection, DocumentMetadataInspection, DocumentSummary,
-    FillRequest, Fixability, HistorySummary, MirrorRequest, MoveRequest, PasteRequest, PreviewDiff,
-    PreviewSummary, RegionInspectionSummary, RegionMeshData, RegionSummary, ReplaceRequest,
-    RotateRequest, SelectionBounds, Session, SessionStatus,
+    AnalysisReport, BlockInspection, BlockInspectionRequest, CleanupRequest, CopyRequest,
+    Diagnostic, DiagnosticSeverity, DocumentInspection, DocumentMetadataInspection,
+    DocumentSummary, FillRequest, Fixability, HistorySummary, MaterialItem, MirrorRequest,
+    MoveRequest, PasteRequest, PreviewDiff, PreviewSummary, RegionInspectionSummary,
+    RegionMeshData, RegionSummary, ReplaceRequest, RotateRequest, SelectionBounds, Session,
+    SessionStatus, StructureStatistics,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -516,6 +517,29 @@ mod wasm_exports {
             match session.diff_with_litematic(bytes) {
                 Ok(diff) => {
                     session.set_json_response(&diff);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_analyze_document(ptr: *const u8, len: usize) -> i32 {
+        let region_id = if !ptr.is_null() && len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+            std::str::from_utf8(slice).ok()
+        } else {
+            None
+        };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.analyze(region_id) {
+                Ok(report) => {
+                    session.set_json_response(&report);
                     0
                 }
                 Err(e) => {

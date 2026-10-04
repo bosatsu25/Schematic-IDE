@@ -187,6 +187,38 @@ pub struct RegionInspectionSummary {
     pub entity_count: usize,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MaterialItem {
+    pub id: String,
+    pub block_state: String,
+    pub count: usize,
+    pub stacks_64: usize,
+    pub remainder: usize,
+    pub percentage: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StructureStatistics {
+    pub total_volume: usize,
+    pub non_air_blocks: usize,
+    pub air_blocks: usize,
+    pub fill_density: f64,
+    pub dimensions: [u32; 3],
+    pub region_count: usize,
+    pub total_entities: usize,
+    pub total_block_entities: usize,
+    pub surface_cell_count: usize,
+    pub island_count: usize,
+    pub feature_counts: BTreeMap<String, usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AnalysisReport {
+    pub region_id: Option<String>,
+    pub statistics: StructureStatistics,
+    pub materials: Vec<MaterialItem>,
+}
+
 pub struct Session {
     litematic: Option<LitematicDocument>,
     sponge: Option<SpongeSchematic>,
@@ -1080,6 +1112,168 @@ impl Session {
         bytes: &[u8],
     ) -> Result<schematic_diff::DocumentDiff, String> {
         self.diff_with_bytes(bytes)
+    }
+
+    pub fn analyze(&self, region_id: Option<&str>) -> Result<AnalysisReport, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let doc = ws.committed();
+
+        let mut block_counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut total_non_air = 0usize;
+        let mut total_volume = 0usize;
+        let mut min_pos: Option<[i32; 3]> = None;
+        let mut max_pos: Option<[i32; 3]> = None;
+        let mut surface_cell_count = 0usize;
+        let mut island_count = 0usize;
+        let mut feature_counts: BTreeMap<String, usize> = BTreeMap::new();
+
+        let target_regions: Vec<&schematic_core::Region> = if let Some(rid) = region_id {
+            let r = doc
+                .region(&RegionId::new(rid))
+                .ok_or_else(|| format!("Region '{rid}' not found"))?;
+            vec![r]
+        } else {
+            doc.regions().collect()
+        };
+
+        let policy = NonAirPolicy;
+
+        for region in &target_regions {
+            let reg_id = region.id();
+            let vol = (region.size().x as usize)
+                * (region.size().y as usize)
+                * (region.size().z as usize);
+            total_volume += vol;
+
+            let reg_min = [region.origin().x, region.origin().y, region.origin().z];
+            let reg_max = [
+                region.origin().x + region.size().x as i32,
+                region.origin().y + region.size().y as i32,
+                region.origin().z + region.size().z as i32,
+            ];
+
+            match &mut min_pos {
+                Some(min) => {
+                    min[0] = min[0].min(reg_min[0]);
+                    min[1] = min[1].min(reg_min[1]);
+                    min[2] = min[2].min(reg_min[2]);
+                }
+                None => min_pos = Some(reg_min),
+            }
+
+            match &mut max_pos {
+                Some(max) => {
+                    max[0] = max[0].max(reg_max[0]);
+                    max[1] = max[1].max(reg_max[1]);
+                    max[2] = max[2].max(reg_max[2]);
+                }
+                None => max_pos = Some(reg_max),
+            }
+
+            // Count materials
+            let palette = region.palette();
+            for (_, chunk) in region.chunks() {
+                for (_, pal_idx) in chunk.occupied_blocks() {
+                    if let Some(state) = palette.get(pal_idx) {
+                        if !is_air(state.id()) {
+                            total_non_air += 1;
+                            let key = block_state_to_string(state);
+                            *block_counts.entry(key).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+
+            // Run surface and feature analysis
+            let target = OperationTarget::unconstrained(Selection::from_bounds(region.bounds()));
+            if let Ok(surface) = SurfaceAnalyzer::analyze(doc, reg_id, &target, &policy) {
+                surface_cell_count += surface.cells().len();
+                island_count += surface.components().len();
+                let features = SurfaceFeatureAnalyzer::analyze(&surface);
+                for desc in features.descriptors() {
+                    let kind_str = match desc.kind {
+                        SurfaceFeatureKind::Face => "Face",
+                        SurfaceFeatureKind::Edge => "Edge",
+                        SurfaceFeatureKind::Corner => "Corner",
+                        SurfaceFeatureKind::ThinFeature => "ThinFeature",
+                        SurfaceFeatureKind::Tip => "Tip",
+                        SurfaceFeatureKind::Isolated => "Isolated",
+                        SurfaceFeatureKind::Interior => "Interior",
+                        SurfaceFeatureKind::UnknownBoundary => "UnknownBoundary",
+                    };
+                    *feature_counts.entry(kind_str.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let mut materials: Vec<MaterialItem> = block_counts
+            .into_iter()
+            .map(|(block_state, count)| {
+                let id = block_state
+                    .split('[')
+                    .next()
+                    .unwrap_or(&block_state)
+                    .to_string();
+                let stacks_64 = count / 64;
+                let remainder = count % 64;
+                let percentage = if total_non_air > 0 {
+                    (count as f64) / (total_non_air as f64) * 100.0
+                } else {
+                    0.0
+                };
+                MaterialItem {
+                    id,
+                    block_state,
+                    count,
+                    stacks_64,
+                    remainder,
+                    percentage,
+                }
+            })
+            .collect();
+
+        // Sort descending by count, then by block_state
+        materials.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.block_state.cmp(&b.block_state))
+        });
+
+        let air_blocks = total_volume.saturating_sub(total_non_air);
+        let fill_density = if total_volume > 0 {
+            (total_non_air as f64) / (total_volume as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let dimensions = match (min_pos, max_pos) {
+            (Some(min), Some(max)) => [
+                (max[0] - min[0]).max(0) as u32,
+                (max[1] - min[1]).max(0) as u32,
+                (max[2] - min[2]).max(0) as u32,
+            ],
+            _ => [0, 0, 0],
+        };
+
+        let statistics = StructureStatistics {
+            total_volume,
+            non_air_blocks: total_non_air,
+            air_blocks,
+            fill_density,
+            dimensions,
+            region_count: target_regions.len(),
+            total_entities: doc.entities().count(),
+            total_block_entities: doc.block_entities().count(),
+            surface_cell_count,
+            island_count,
+            feature_counts,
+        };
+
+        Ok(AnalysisReport {
+            region_id: region_id.map(|s| s.to_string()),
+            statistics,
+            materials,
+        })
     }
 }
 

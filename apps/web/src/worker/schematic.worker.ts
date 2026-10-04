@@ -38,7 +38,8 @@ export type WorkerMessage =
   | { id: string; type: 'INSPECT_DOCUMENT' }
   | { id: string; type: 'VALIDATE_DOCUMENT' }
   | { id: string; type: 'DIFF_WITH_SOURCE' }
-  | { id: string; type: 'DIFF_WITH_LITEMATIC'; buffer: ArrayBuffer };
+  | { id: string; type: 'DIFF_WITH_LITEMATIC'; buffer: ArrayBuffer }
+  | { id: string; type: 'ANALYZE_DOCUMENT'; regionId?: string };
 
 export interface WorkerResponse {
   id: string;
@@ -187,6 +188,11 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       }
       case 'DIFF_WITH_LITEMATIC': {
         const res = engine.diffWithLitematic(new Uint8Array(msg.buffer));
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'ANALYZE_DOCUMENT': {
+        const res = engine.analyze(msg.regionId);
         self.postMessage({ id: msg.id, ok: true, data: res });
         break;
       }

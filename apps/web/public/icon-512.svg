@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#1a1a24"/>
+  <defs>
+    <linearGradient id="topGrad512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+    <linearGradient id="leftGrad512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <linearGradient id="rightGrad512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e40af"/>
+      <stop offset="100%" stop-color="#172554"/>
+    </linearGradient>
+  </defs>
+  <!-- Isometric Blueprint Cube -->
+  <g transform="translate(256, 256)">
+    <!-- Top Face -->
+    <polygon points="0,-128 128,-64 0,0 -128,-64" fill="url(#topGrad512)" stroke="#93c5fd" stroke-width="4"/>
+    <!-- Left Face -->
+    <polygon points="-128,-64 0,0 0,128 -128,64" fill="url(#leftGrad512)" stroke="#60a5fa" stroke-width="4"/>
+    <!-- Right Face -->
+    <polygon points="0,0 128,-64 128,64 0,128" fill="url(#rightGrad512)" stroke="#3b82f6" stroke-width="4"/>
+    <!-- Grid overlay lines -->
+    <line x1="-64" y1="-96" x2="64" y2="-32" stroke="#bfdbfe" stroke-width="3" stroke-dasharray="8,8"/>
+    <line x1="64" y1="-96" x2="-64" y2="-32" stroke="#bfdbfe" stroke-width="3" stroke-dasharray="8,8"/>
+    <line x1="-64" y1="-32" x2="-64" y2="96" stroke="#93c5fd" stroke-width="3" stroke-dasharray="8,8"/>
+    <line x1="64" y1="-32" x2="64" y2="96" stroke="#60a5fa" stroke-width="3" stroke-dasharray="8,8"/>
+  </g>
+</svg>

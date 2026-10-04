@@ -8,7 +8,7 @@ This document provides a line-by-line verification and gap analysis of Schematic
 |---|:---:|---|---|---|
 | **Local-first execution** | **DONE** | Pure client-side React + WASM architecture. No external API calls, backend services, or mandatory accounts. | None. Verified in Playwright E2E and worker tests. | N/A (Already in `main`) |
 | **Web browser app** | **DONE** | React 18 + Vite frontend running locally on `http://localhost:5173`. | None. | PR #10 / PR #11 |
-| **PWA / Offline support** | **PARTIAL** | App runs locally via dev/preview server. | Web App Manifest (`manifest.json`), service worker offline caching shell, installable icons. | Wave 8G (`chore/v1-pwa-docs`) |
+| **PWA / Offline support** | **DONE** | Web App Manifest (`manifest.json`), service worker offline caching shell (`sw.js`), installable SVG icons (192x192, 512x512), standalone display mode, theme colors. | None. | Wave 8G (PR #19) |
 | **`.litematic` support** | **DONE** | `schematic-format` implements pure Rust NBT, continuous 64-bit bit-packing, multi-region, negative bounds, block entity preservation. | None. Round-trip tested in `crates/schematic-format/tests/litematic_tests.rs`. | PR #7 |
 | **Sponge `.schem` support** | **DONE** | Format adapter for Sponge Schematic v1/v2/v3 (varint block data, palette conversion, block entities, entities, unknown NBT preservation). Roundtrip tested in `multi_format_tests.rs` and E2E. | None. | Wave 8D (PR #16) |
 | **Java Structure NBT support** | **DONE** | Structure NBT format adapter (size array, palette, block entries with positions, block entities, entities, unknown tag preservation). Roundtrip tested in `multi_format_tests.rs` and E2E. | None. | Wave 8D (PR #16) |

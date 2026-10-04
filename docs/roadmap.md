@@ -10,7 +10,8 @@
 - **Phase 5 — WASM Session Boundary (`schematic-wasm`)**: Complete (PR #8).
 - **Phase 6 — Three.js Renderer (`@schematic-ide/renderer`)**: Complete (PR #10).
 - **Phase 7 — First Vertical Slice & E2E (`apps/web` & Playwright)**: Complete (PR #10, PR #11).
-- **Phase 8+ — IDE Hardening & v1.0 Completion**: In progress.
+- **Phase 8 — IDE Hardening & v1.0 Completion**: Complete (Waves 8A–8G, PRs #13–#19).
+- **Phase 9+ — Advanced Features (Future Roadmap)**: Post-v1.0 enhancements.
 
 ---
 
@@ -44,7 +45,7 @@
 
 ## Phase 8+ — IDE Hardening & v1.0 Completion
 
-### Wave 8A — Inspector & Diagnostics
+### Wave 8A — Inspector & Diagnostics (Complete — PR #13)
 - **`schematic-validate` crate implementation**:
   - Diagnostic domain model: `Diagnostic { severity, code, message, region, position, fixability }`.
   - Core validation rules: out-of-bounds blocks, palette index corruption, malformed metadata, block entity misalignment, duplicate regions.
@@ -53,7 +54,7 @@
 - **Problems Panel**:
   - Filterable list of validation diagnostics with position links and severity badges.
 
-### Wave 8B — Structural Editing
+### Wave 8B — Structural Editing (Complete — PR #14)
 - **Advanced Editing Operations**:
   - **Fill**: Fill selected region/boxes with specified block state.
   - **Copy / Paste**: Region-relative clipboard capturing blocks, block states, and block entities with safe translation.
@@ -64,7 +65,7 @@
   - Invertibility tests (4x 90° rotate = identity, 2x mirror = identity).
   - Property-based tests for directional Minecraft block states.
 
-### Wave 8C — Canonical Structural Diff
+### Wave 8C — Canonical Structural Diff (Complete — PR #15)
 - **Structural Diff Engine**:
   - Comparison between two Documents or two Regions in canonical domain.
   - Categories: Added, Removed, Changed, Unchanged.
@@ -73,7 +74,7 @@
   - Color-coded overlay in Three.js renderer (Green = Added, Red = Removed, Amber = Changed).
   - Diff summary and change list in the web UI.
 
-### Wave 8D — Multi-format Adapters
+### Wave 8D — Multi-format Adapters (Complete — PR #16)
 - **Sponge `.schem` Adapter**:
   - Schematic v2/v3 support, varint block data, metadata, palettes, block entities, entities.
 - **Java Structure `.nbt` Adapter**:
@@ -81,7 +82,7 @@
 - **Lossless Inter-format Round-trip**:
   - Round-trip tests and explicit warnings / conversion rejection for unsupported cross-format features (no silent data loss).
 
-### Wave 8E — Material & Structural Analysis UI
+### Wave 8E — Material & Structural Analysis UI (Complete — PR #17)
 - **Material List**:
   - Aggregated block state counts across document, region, and selection.
   - Searchable and exportable material breakdown.
@@ -90,16 +91,16 @@
 - **Integrated Surface & Feature Analysis**:
   - Expose `schematic-analysis` metrics to the UI.
 
-### Wave 8F — Performance Hardening
+### Wave 8F — Performance Hardening (Complete — PR #18)
 - **Benchmark Suite**:
-  - Synthetic benchmarks at 1M, 5M, and 10M block scale.
-  - Measure parse latency, memory footprint, mesh build time, edit patch latency, and export time.
+  - Synthetic benchmarks at 1M, 5M, and 10M block scale (`crates/schematic-wasm/tests/scale_benchmarks.rs`).
+  - Measure parse latency, memory footprint, mesh build time, edit patch latency, and export time (`docs/benchmarks.md`).
 - **Chunked Pipeline Tuning**:
   - Keep Web Worker message transfers zero-copy where possible and avoid blocking the UI thread.
 
-### Wave 8G — PWA & Offline Application Shell
+### Wave 8G — PWA & Offline Application Shell (Complete — PR #19)
 - **PWA Deployment**:
-  - Web App Manifest (`manifest.json`), service worker for offline asset caching.
+  - Web App Manifest (`manifest.json`), service worker for offline asset caching (`sw.js`).
   - Fully local-first guarantee: zero outbound telemetry or backend requirements.
 
 ---

@@ -26,12 +26,14 @@ export interface RegionMeshData {
   };
 }
 
+export interface SelectionBounds {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
 export interface ReplaceRequest {
   region_id: string;
-  selection?: {
-    min: [number, number, number];
-    max: [number, number, number];
-  };
+  selection?: SelectionBounds;
   from_block: string;
   to_block: string;
 }

@@ -9,3 +9,5 @@ name = "schematic_format"
 path = "src/lib.rs"
 
 [dependencies]
+schematic-core = { path = "../schematic-core" }
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }

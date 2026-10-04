@@ -134,6 +134,16 @@ export class SchematicWorkerClient {
     return new Uint8Array(buffer);
   }
 
+  async exportSponge(): Promise<Uint8Array> {
+    const buffer = await this.send<ArrayBuffer>({ type: 'EXPORT_SPONGE' });
+    return new Uint8Array(buffer);
+  }
+
+  async exportStructure(): Promise<Uint8Array> {
+    const buffer = await this.send<ArrayBuffer>({ type: 'EXPORT_STRUCTURE' });
+    return new Uint8Array(buffer);
+  }
+
   async getStatus(): Promise<SessionStatus> {
     return this.send({ type: 'GET_STATUS' });
   }

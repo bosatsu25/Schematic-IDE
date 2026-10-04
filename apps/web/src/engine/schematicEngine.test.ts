@@ -244,4 +244,38 @@ describe('SchematicEngine WASM wrapper', () => {
     const fileDiff = engine.diffWithLitematic(sampleBytes);
     expect(fileDiff.total_added).toBe(1);
   });
+
+  it('supports multi-format cross-export and import for Sponge .schem and Structure .nbt', async () => {
+    engine.loadLitematic(sampleBytes);
+
+    // Export to Sponge .schem
+    const spongeBytes = engine.exportSponge();
+    expect(spongeBytes.length).toBeGreaterThan(0);
+
+    // Load Sponge into a second engine
+    const engineSponge = new SchematicEngine();
+    const wasmPath = path.resolve(__dirname, '../../public/schematic_wasm.wasm');
+    const wasmBuffer = fs.readFileSync(wasmPath);
+    await engineSponge.init(wasmBuffer);
+    const spongeSummary = engineSponge.loadLitematic(spongeBytes);
+    expect(spongeSummary.regions.length).toBe(1);
+    expect(spongeSummary.regions[0].non_air_blocks).toBe(12);
+
+    // Export from Sponge engine to Structure .nbt
+    const structureBytes = engineSponge.exportStructure();
+    expect(structureBytes.length).toBeGreaterThan(0);
+
+    // Load Structure into a third engine
+    const engineStruct = new SchematicEngine();
+    await engineStruct.init(wasmBuffer);
+    const structSummary = engineStruct.loadLitematic(structureBytes);
+    expect(structSummary.regions.length).toBe(1);
+    expect(structSummary.regions[0].non_air_blocks).toBe(12);
+
+    // Diff between Sponge engine and Structure engine
+    const diff = engineStruct.diffWithLitematic(spongeBytes);
+    expect(diff.total_added).toBe(0);
+    expect(diff.total_removed).toBe(0);
+    expect(diff.total_modified).toBe(0);
+  });
 });

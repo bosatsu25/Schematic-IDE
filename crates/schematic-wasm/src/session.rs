@@ -9,7 +9,10 @@ use schematic_edit::{
     Clipboard, EditWorkspace, FillCommand, IslandCleanupRequest, MirrorAxis, MirrorCommand,
     MoveCommand, PasteCommand, ReplaceCommand, RotateCommand, RotationAngle,
 };
-use schematic_format::{LitematicDocument, NbtTag};
+use schematic_format::{
+    detect_format, LitematicDocument, NbtTag, SchematicFormatType, SpongeSchematic,
+    StructureDocument,
+};
 use schematic_validate::validate_document as core_validate_document;
 pub use schematic_validate::{Diagnostic, DiagnosticSeverity, Fixability};
 use serde::{Deserialize, Serialize};
@@ -186,6 +189,8 @@ pub struct RegionInspectionSummary {
 
 pub struct Session {
     litematic: Option<LitematicDocument>,
+    sponge: Option<SpongeSchematic>,
+    structure: Option<StructureDocument>,
     workspace: Option<EditWorkspace>,
     clipboard: Option<Clipboard>,
     response_buffer: Vec<u8>,
@@ -201,6 +206,8 @@ impl Session {
     pub fn new() -> Self {
         Self {
             litematic: None,
+            sponge: None,
+            structure: None,
             workspace: None,
             clipboard: None,
             response_buffer: Vec::new(),
@@ -241,15 +248,48 @@ impl Session {
         }
     }
 
-    pub fn load_litematic(&mut self, bytes: &[u8]) -> Result<DocumentSummary, String> {
-        let litematic = LitematicDocument::parse(bytes).map_err(|e| e.to_string())?;
-        let workspace = EditWorkspace::start(litematic.document.clone());
+    pub fn load_schematic(&mut self, bytes: &[u8]) -> Result<DocumentSummary, String> {
+        let format_type = detect_format(bytes).map_err(|e| e.to_string())?;
 
-        let doc = workspace.committed();
-        let meta = doc.metadata();
+        let (doc, data_version, version) = match format_type {
+            SchematicFormatType::Litematic => {
+                let litematic = LitematicDocument::parse(bytes).map_err(|e| e.to_string())?;
+                let doc = litematic.document.clone();
+                let dv = litematic.data_version;
+                let v = litematic.version;
+                self.litematic = Some(litematic);
+                self.sponge = None;
+                self.structure = None;
+                (doc, dv, v)
+            }
+            SchematicFormatType::SpongeSchematic => {
+                let sponge = SpongeSchematic::parse(bytes).map_err(|e| e.to_string())?;
+                let doc = sponge.document.clone();
+                let dv = sponge.data_version;
+                let v = sponge.version;
+                self.sponge = Some(sponge);
+                self.litematic = None;
+                self.structure = None;
+                (doc, dv, v)
+            }
+            SchematicFormatType::StructureNbt => {
+                let structure = StructureDocument::parse(bytes).map_err(|e| e.to_string())?;
+                let doc = structure.document.clone();
+                let dv = structure.data_version;
+                let v = 1;
+                self.structure = Some(structure);
+                self.litematic = None;
+                self.sponge = None;
+                (doc, dv, v)
+            }
+        };
+
+        let workspace = EditWorkspace::start(doc);
+        let committed_doc = workspace.committed();
+        let meta = committed_doc.metadata();
         let mut regions = Vec::new();
 
-        for region in doc.regions() {
+        for region in committed_doc.regions() {
             let mut non_air = 0;
             let mut pal_strings = Vec::new();
             for idx in 0..region.palette().len() {
@@ -281,15 +321,18 @@ impl Session {
             name: meta.name.clone().unwrap_or_default(),
             author: meta.author.clone().unwrap_or_default(),
             description: meta.description.clone().unwrap_or_default(),
-            minecraft_data_version: litematic.data_version,
-            version: litematic.version,
+            minecraft_data_version: data_version,
+            version,
             regions,
         };
 
-        self.litematic = Some(litematic);
         self.workspace = Some(workspace);
 
         Ok(summary)
+    }
+
+    pub fn load_litematic(&mut self, bytes: &[u8]) -> Result<DocumentSummary, String> {
+        self.load_schematic(bytes)
     }
 
     pub fn get_region_mesh(&self, region_name: &str) -> Result<RegionMeshData, String> {
@@ -755,8 +798,35 @@ impl Session {
 
     pub fn export_litematic(&self) -> Result<Vec<u8>, String> {
         let ws = self.workspace.as_ref().ok_or("No document loaded")?;
-        let litematic = self.litematic.as_ref().ok_or("No litematic template")?;
-        litematic.export(ws.committed()).map_err(|e| e.to_string())
+        let doc = ws.committed();
+        if let Some(litematic) = &self.litematic {
+            litematic.export(doc).map_err(|e| e.to_string())
+        } else {
+            let default_template = LitematicDocument::new(doc.clone());
+            default_template.export(doc).map_err(|e| e.to_string())
+        }
+    }
+
+    pub fn export_sponge(&self) -> Result<Vec<u8>, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let doc = ws.committed();
+        if let Some(sponge) = &self.sponge {
+            sponge.export(doc).map_err(|e| e.to_string())
+        } else {
+            let default_template = SpongeSchematic::from_document(doc.clone(), 2975);
+            default_template.export(doc).map_err(|e| e.to_string())
+        }
+    }
+
+    pub fn export_structure(&self) -> Result<Vec<u8>, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let doc = ws.committed();
+        if let Some(structure) = &self.structure {
+            structure.export(doc).map_err(|e| e.to_string())
+        } else {
+            let default_template = StructureDocument::from_document(doc.clone(), 2975);
+            default_template.export(doc).map_err(|e| e.to_string())
+        }
     }
 
     pub fn inspect_block(
@@ -852,14 +922,26 @@ impl Session {
             .ok_or_else(|| "No document loaded".to_string())?;
         let doc = ws.committed();
         let litematic = self.litematic.as_ref();
+        let sponge = self.sponge.as_ref();
+        let structure = self.structure.as_ref();
+
+        let (data_version, version) = if let Some(l) = litematic {
+            (l.data_version, l.version)
+        } else if let Some(s) = sponge {
+            (s.data_version, s.version)
+        } else if let Some(st) = structure {
+            (st.data_version, 1)
+        } else {
+            (0, 0)
+        };
 
         let meta = doc.metadata();
         let metadata = DocumentMetadataInspection {
             name: meta.name.clone(),
             author: meta.author.clone(),
             description: meta.description.clone(),
-            minecraft_data_version: litematic.map(|l| l.data_version).unwrap_or(0),
-            version: litematic.map(|l| l.version).unwrap_or(0),
+            minecraft_data_version: data_version,
+            version,
         };
 
         let mut regions = Vec::new();
@@ -875,7 +957,7 @@ impl Session {
                     (0, 0)
                 }
             } else {
-                (0, 0)
+                (doc.block_entities().count(), doc.entities().count())
             };
             total_be += be_count;
             total_ent += ent_count;
@@ -911,6 +993,16 @@ impl Session {
             keys.sort();
             keys.dedup();
             keys
+        } else if let Some(s) = sponge {
+            let mut keys: Vec<String> = s.raw_root_unknown.keys().cloned().collect();
+            keys.sort();
+            keys.dedup();
+            keys
+        } else if let Some(st) = structure {
+            let mut keys: Vec<String> = st.raw_root_unknown.keys().cloned().collect();
+            keys.sort();
+            keys.dedup();
+            keys
         } else {
             Vec::new()
         };
@@ -937,12 +1029,47 @@ impl Session {
             .workspace
             .as_ref()
             .ok_or_else(|| "No session active".to_string())?;
-        let orig = self
-            .litematic
-            .as_ref()
-            .ok_or_else(|| "No source document available".to_string())?;
+        let orig_doc = if let Some(l) = &self.litematic {
+            &l.document
+        } else if let Some(s) = &self.sponge {
+            &s.document
+        } else if let Some(st) = &self.structure {
+            &st.document
+        } else {
+            return Err("No source document available".to_string());
+        };
         Ok(schematic_diff::diff_documents(
-            &orig.document,
+            orig_doc,
+            ws.committed(),
+            false,
+        ))
+    }
+
+    pub fn diff_with_bytes(&self, bytes: &[u8]) -> Result<schematic_diff::DocumentDiff, String> {
+        let ws = self
+            .workspace
+            .as_ref()
+            .ok_or_else(|| "No session active".to_string())?;
+        let format_type = detect_format(bytes).map_err(|e| e.to_string())?;
+        let other_doc = match format_type {
+            SchematicFormatType::Litematic => {
+                LitematicDocument::parse(bytes)
+                    .map_err(|e| e.to_string())?
+                    .document
+            }
+            SchematicFormatType::SpongeSchematic => {
+                SpongeSchematic::parse(bytes)
+                    .map_err(|e| e.to_string())?
+                    .document
+            }
+            SchematicFormatType::StructureNbt => {
+                StructureDocument::parse(bytes)
+                    .map_err(|e| e.to_string())?
+                    .document
+            }
+        };
+        Ok(schematic_diff::diff_documents(
+            &other_doc,
             ws.committed(),
             false,
         ))
@@ -952,16 +1079,7 @@ impl Session {
         &self,
         bytes: &[u8],
     ) -> Result<schematic_diff::DocumentDiff, String> {
-        let ws = self
-            .workspace
-            .as_ref()
-            .ok_or_else(|| "No session active".to_string())?;
-        let other = LitematicDocument::parse(bytes).map_err(|e| e.to_string())?;
-        Ok(schematic_diff::diff_documents(
-            &other.document,
-            ws.committed(),
-            false,
-        ))
+        self.diff_with_bytes(bytes)
     }
 }
 

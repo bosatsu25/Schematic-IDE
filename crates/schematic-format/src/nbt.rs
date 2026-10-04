@@ -93,6 +93,29 @@ impl NbtTag {
             _ => None,
         }
     }
+
+    pub fn as_int_array(&self) -> Option<&[i32]> {
+        match self {
+            Self::IntArray(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    pub fn as_byte_array(&self) -> Option<&[u8]> {
+        match self {
+            Self::ByteArray(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Double(d) => Some(*d),
+            Self::Float(f) => Some(*f as f64),
+            Self::Int(i) => Some(*i as f64),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

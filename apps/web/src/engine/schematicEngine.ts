@@ -214,6 +214,8 @@ interface WasmExports {
   schematic_undo(): number;
   schematic_redo(): number;
   schematic_export_litematic(): number;
+  schematic_export_sponge(): number;
+  schematic_export_structure(): number;
   schematic_get_status(): number;
   schematic_inspect_block(ptr: number, len: number): number;
   schematic_inspect_document(): number;
@@ -355,6 +357,26 @@ export class SchematicEngine {
 
   exportLitematic(): Uint8Array {
     const code = this.exports.schematic_export_litematic();
+    if (code !== 0) {
+      this.handleJsonResponse(code); // throws error
+    }
+    const ptr = this.exports.wasm_get_response_ptr();
+    const len = this.exports.wasm_get_response_len();
+    return new Uint8Array(this.exports.memory.buffer, ptr, len).slice();
+  }
+
+  exportSponge(): Uint8Array {
+    const code = this.exports.schematic_export_sponge();
+    if (code !== 0) {
+      this.handleJsonResponse(code); // throws error
+    }
+    const ptr = this.exports.wasm_get_response_ptr();
+    const len = this.exports.wasm_get_response_len();
+    return new Uint8Array(this.exports.memory.buffer, ptr, len).slice();
+  }
+
+  exportStructure(): Uint8Array {
+    const code = this.exports.schematic_export_structure();
     if (code !== 0) {
       this.handleJsonResponse(code); // throws error
     }

@@ -157,5 +157,37 @@ test.describe('End-to-End Litematic Browser Workflow', () => {
     const blockCountText = await page.getByTestId('region-block-count').textContent();
     const count = parseInt(blockCountText || '0', 10);
     expect(count).toBe(18);
+
+    // 13. Multi-format export: Sponge (.schem)
+    await page.getByTestId('export-format-select').selectOption('sponge');
+    const downloadSpongePromise = page.waitForEvent('download');
+    await page.getByTestId('export-btn').click();
+    const downloadSponge = await downloadSpongePromise;
+    expect(downloadSponge.suggestedFilename()).toContain('.schem');
+    const spongeExportPath = path.resolve(__dirname, '../test-results/exported.schem');
+    await downloadSponge.saveAs(spongeExportPath);
+    expect(fs.existsSync(spongeExportPath)).toBe(true);
+
+    // Reload Sponge file into browser
+    await fileInput.setInputFiles(spongeExportPath);
+    await expect(page.getByTestId('viewport-canvas')).toBeVisible();
+    const spongeBlockCount = await page.getByTestId('region-block-count').textContent();
+    expect(parseInt(spongeBlockCount || '0', 10)).toBe(18);
+
+    // 14. Multi-format export: Structure (.nbt)
+    await page.getByTestId('export-format-select').selectOption('structure');
+    const downloadStructPromise = page.waitForEvent('download');
+    await page.getByTestId('export-btn').click();
+    const downloadStruct = await downloadStructPromise;
+    expect(downloadStruct.suggestedFilename()).toContain('.nbt');
+    const structExportPath = path.resolve(__dirname, '../test-results/exported.nbt');
+    await downloadStruct.saveAs(structExportPath);
+    expect(fs.existsSync(structExportPath)).toBe(true);
+
+    // Reload Structure file into browser
+    await fileInput.setInputFiles(structExportPath);
+    await expect(page.getByTestId('viewport-canvas')).toBeVisible();
+    const structBlockCount = await page.getByTestId('region-block-count').textContent();
+    expect(parseInt(structBlockCount || '0', 10)).toBe(18);
   });
 });

@@ -31,6 +31,8 @@ export type WorkerMessage =
   | { id: string; type: 'UNDO' }
   | { id: string; type: 'REDO' }
   | { id: string; type: 'EXPORT_LITEMATIC' }
+  | { id: string; type: 'EXPORT_SPONGE' }
+  | { id: string; type: 'EXPORT_STRUCTURE' }
   | { id: string; type: 'GET_STATUS' }
   | { id: string; type: 'INSPECT_BLOCK'; req: BlockInspectionRequest }
   | { id: string; type: 'INSPECT_DOCUMENT' }
@@ -133,6 +135,24 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       }
       case 'EXPORT_LITEMATIC': {
         const bytes = engine.exportLitematic();
+        // Transfer ArrayBuffer for zero-copy
+        (self as unknown as Worker).postMessage(
+          { id: msg.id, ok: true, data: bytes.buffer },
+          [bytes.buffer],
+        );
+        break;
+      }
+      case 'EXPORT_SPONGE': {
+        const bytes = engine.exportSponge();
+        // Transfer ArrayBuffer for zero-copy
+        (self as unknown as Worker).postMessage(
+          { id: msg.id, ok: true, data: bytes.buffer },
+          [bytes.buffer],
+        );
+        break;
+      }
+      case 'EXPORT_STRUCTURE': {
+        const bytes = engine.exportStructure();
         // Transfer ArrayBuffer for zero-copy
         (self as unknown as Worker).postMessage(
           { id: msg.id, ok: true, data: bytes.buffer },

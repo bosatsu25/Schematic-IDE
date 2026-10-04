@@ -340,3 +340,42 @@ fn test_diff_with_source_in_session() {
     assert_eq!(diff_edited.total_added, 1);
     assert_eq!(diff_edited.block_diffs.len(), 2);
 }
+
+#[test]
+fn test_multi_format_session() {
+    let mut session = Session::new();
+    let litematic_bytes = create_sample_litematic();
+    let summary1 = session
+        .load_schematic(&litematic_bytes)
+        .expect("load litematic");
+    assert_eq!(summary1.regions.len(), 1);
+    assert_eq!(summary1.regions[0].non_air_blocks, 12);
+
+    // Export to Sponge .schem
+    let sponge_bytes = session.export_sponge().expect("export sponge");
+
+    // Load Sponge .schem into new session
+    let mut session2 = Session::new();
+    let summary2 = session2.load_schematic(&sponge_bytes).expect("load sponge");
+    assert_eq!(summary2.regions.len(), 1);
+    assert_eq!(summary2.regions[0].non_air_blocks, 12);
+
+    // Export to Structure .nbt
+    let structure_bytes = session2.export_structure().expect("export structure");
+
+    // Load Structure .nbt into new session
+    let mut session3 = Session::new();
+    let summary3 = session3
+        .load_schematic(&structure_bytes)
+        .expect("load structure");
+    assert_eq!(summary3.regions.len(), 1);
+    assert_eq!(summary3.regions[0].non_air_blocks, 12);
+
+    // Diff session3 with sponge_bytes (both have region 'Main')
+    let diff = session3
+        .diff_with_bytes(&sponge_bytes)
+        .expect("diff with sponge");
+    assert_eq!(diff.total_added, 0);
+    assert_eq!(diff.total_removed, 0);
+    assert_eq!(diff.total_modified, 0);
+}

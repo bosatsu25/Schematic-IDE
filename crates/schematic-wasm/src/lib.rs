@@ -74,6 +74,11 @@ mod wasm_exports {
     }
 
     #[no_mangle]
+    pub extern "C" fn schematic_load_schematic(ptr: *const u8, len: usize) -> i32 {
+        schematic_load_litematic(ptr, len)
+    }
+
+    #[no_mangle]
     pub extern "C" fn schematic_get_region_mesh(ptr: *const u8, len: usize) -> i32 {
         let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
         let region_name = match std::str::from_utf8(slice) {
@@ -371,6 +376,40 @@ mod wasm_exports {
         SESSION.with(|s| {
             let mut session = s.borrow_mut();
             match session.export_litematic() {
+                Ok(bytes) => {
+                    session.set_bytes_response(bytes);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_export_sponge() -> i32 {
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.export_sponge() {
+                Ok(bytes) => {
+                    session.set_bytes_response(bytes);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_export_structure() -> i32 {
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.export_structure() {
                 Ok(bytes) => {
                     session.set_bytes_response(bytes);
                     0

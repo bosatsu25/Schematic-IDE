@@ -26,11 +26,18 @@ export class SchematicWorkerClient {
   constructor(worker?: Worker) {
     if (worker) {
       this.worker = worker;
-    } else {
+    } else if (typeof Worker !== 'undefined') {
       this.worker = new Worker(
         new URL('./schematic.worker.ts', import.meta.url),
         { type: 'module' },
       );
+    } else {
+      this.worker = {
+        postMessage: () => {},
+        terminate: () => {},
+        onmessage: null,
+        onerror: null,
+      } as unknown as Worker;
     }
 
     this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => {

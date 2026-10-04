@@ -192,6 +192,35 @@ export interface DocumentDiff {
   entity_diffs: EntityDiff[];
 }
 
+export interface MaterialItem {
+  id: string;
+  block_state: string;
+  count: number;
+  stacks_64: number;
+  remainder: number;
+  percentage: number;
+}
+
+export interface StructureStatistics {
+  total_volume: number;
+  non_air_blocks: number;
+  air_blocks: number;
+  fill_density: number;
+  dimensions: [number, number, number];
+  region_count: number;
+  total_entities: number;
+  total_block_entities: number;
+  surface_cell_count: number;
+  island_count: number;
+  feature_counts: Record<string, number>;
+}
+
+export interface AnalysisReport {
+  region_id?: string | null;
+  statistics: StructureStatistics;
+  materials: MaterialItem[];
+}
+
 interface WasmExports {
   memory: WebAssembly.Memory;
   wasm_alloc(size: number): number;
@@ -222,6 +251,7 @@ interface WasmExports {
   schematic_validate_document(): number;
   schematic_diff_with_source(): number;
   schematic_diff_with_litematic(ptr: number, len: number): number;
+  schematic_analyze_document(ptr: number, len: number): number;
 }
 
 export class SchematicEngine {
@@ -418,6 +448,19 @@ export class SchematicEngine {
       this.exports.schematic_diff_with_litematic(ptr, len),
     );
     return this.handleJsonResponse<DocumentDiff>(code);
+  }
+
+  analyze(regionId?: string): AnalysisReport {
+    if (regionId) {
+      const bytes = this.textEncoder.encode(regionId);
+      const code = this.callWithBytes(bytes, (ptr, len) =>
+        this.exports.schematic_analyze_document(ptr, len),
+      );
+      return this.handleJsonResponse<AnalysisReport>(code);
+    } else {
+      const code = this.exports.schematic_analyze_document(0, 0);
+      return this.handleJsonResponse<AnalysisReport>(code);
+    }
   }
 
   private callWithBytes(

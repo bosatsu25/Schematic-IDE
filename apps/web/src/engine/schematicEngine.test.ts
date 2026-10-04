@@ -278,4 +278,30 @@ describe('SchematicEngine WASM wrapper', () => {
     expect(diff.total_removed).toBe(0);
     expect(diff.total_modified).toBe(0);
   });
+
+  it('analyzes materials and surface structure metrics', () => {
+    engine.loadLitematic(sampleBytes);
+
+    const report = engine.analyze();
+    expect(report.statistics.total_volume).toBe(16 * 16 * 16);
+    expect(report.statistics.non_air_blocks).toBe(12);
+    expect(report.statistics.air_blocks).toBe(16 * 16 * 16 - 12);
+    expect(report.statistics.fill_density).toBeGreaterThan(0);
+    expect(report.statistics.dimensions).toEqual([16, 16, 16]);
+    expect(report.statistics.surface_cell_count).toBeGreaterThan(0);
+    expect(report.statistics.island_count).toBeGreaterThan(0);
+
+    // Verify materials
+    expect(report.materials.length).toBe(2);
+    expect(report.materials[0].id).toBe('minecraft:stone');
+    expect(report.materials[0].count).toBe(11);
+    expect(report.materials[0].stacks_64).toBe(0);
+    expect(report.materials[0].remainder).toBe(11);
+    expect(report.materials[1].id).toBe('minecraft:granite');
+    expect(report.materials[1].count).toBe(1);
+
+    // Verify feature counts
+    expect(report.statistics.feature_counts).toBeDefined();
+    expect(Object.keys(report.statistics.feature_counts).length).toBeGreaterThan(0);
+  });
 });

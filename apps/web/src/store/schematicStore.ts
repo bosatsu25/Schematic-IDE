@@ -10,10 +10,11 @@ import {
   Diagnostic,
   DocumentDiff,
   BlockDiff,
+  AnalysisReport,
 } from '../engine/schematicEngine';
 import { SchematicWorkerClient } from '../worker/workerClient';
 
-export type SidebarTab = 'regions' | 'inspector' | 'problems' | 'diff';
+export type SidebarTab = 'regions' | 'inspector' | 'problems' | 'diff' | 'analysis';
 export type ExportFormat = 'litematic' | 'sponge' | 'structure';
 
 export interface EditorState {
@@ -36,6 +37,7 @@ export interface EditorState {
   currentDiff: DocumentDiff | null;
   diffMode: boolean;
   selectedDiff: BlockDiff | null;
+  analysisReport: AnalysisReport | null;
 
   init: () => Promise<void>;
   loadFile: (file: File) => Promise<void>;
@@ -70,6 +72,7 @@ export interface EditorState {
   redo: () => Promise<void>;
   setExportFormat: (format: ExportFormat) => void;
   exportFile: (defaultFilename?: string, format?: ExportFormat) => Promise<Uint8Array | null>;
+  runAnalysis: (regionId?: string) => Promise<void>;
 }
 
 export const useSchematicStore = create<EditorState>((set, get) => {
@@ -101,6 +104,7 @@ export const useSchematicStore = create<EditorState>((set, get) => {
     currentDiff: null,
     diffMode: false,
     selectedDiff: null,
+    analysisReport: null,
 
     init: async () => {
       try {
@@ -116,6 +120,19 @@ export const useSchematicStore = create<EditorState>((set, get) => {
 
     setActiveTab: (tab: SidebarTab) => {
       set({ activeTab: tab });
+      if (tab === 'analysis' && !get().analysisReport) {
+        get().runAnalysis();
+      }
+    },
+
+    runAnalysis: async (regionId?: string) => {
+      const regId = regionId !== undefined ? regionId : get().selectedRegionId || undefined;
+      try {
+        const report = await client.analyzeDocument(regId);
+        set({ analysisReport: report });
+      } catch (err: unknown) {
+        console.error('Analysis failed:', err);
+      }
     },
 
     inspectBlock: async (x: number, y: number, z: number, regionId?: string) => {
@@ -248,6 +265,7 @@ export const useSchematicStore = create<EditorState>((set, get) => {
 
         await get().inspectDocument();
         await get().validateDocument();
+        await get().runAnalysis();
 
         const status = await client.getStatus();
         set({ status, loading: false });
@@ -264,6 +282,9 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       try {
         const meshData = await client.getRegionMesh(regionId);
         set({ meshData, loading: false });
+        if (get().analysisReport) {
+          await get().runAnalysis(regionId);
+        }
       } catch (err: unknown) {
         set({
           error: err instanceof Error ? err.message : String(err),
@@ -565,6 +586,9 @@ export const useSchematicStore = create<EditorState>((set, get) => {
         });
         await get().inspectDocument();
         await get().validateDocument();
+        if (get().analysisReport) {
+          await get().runAnalysis();
+        }
       } catch (err: unknown) {
         set({
           error: err instanceof Error ? err.message : String(err),
@@ -616,6 +640,9 @@ export const useSchematicStore = create<EditorState>((set, get) => {
         });
         await get().inspectDocument();
         await get().validateDocument();
+        if (get().analysisReport) {
+          await get().runAnalysis();
+        }
       } catch (err: unknown) {
         set({
           error: err instanceof Error ? err.message : String(err),
@@ -642,6 +669,9 @@ export const useSchematicStore = create<EditorState>((set, get) => {
         });
         await get().inspectDocument();
         await get().validateDocument();
+        if (get().analysisReport) {
+          await get().runAnalysis();
+        }
       } catch (err: unknown) {
         set({
           error: err instanceof Error ? err.message : String(err),

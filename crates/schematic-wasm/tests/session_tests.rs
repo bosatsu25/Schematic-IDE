@@ -379,3 +379,43 @@ fn test_multi_format_session() {
     assert_eq!(diff.total_removed, 0);
     assert_eq!(diff.total_modified, 0);
 }
+
+#[test]
+fn test_analyze_document_in_session() {
+    let mut session = Session::new();
+    let bytes = create_sample_litematic();
+    session.load_litematic(&bytes).expect("load litematic");
+
+    let report = session.analyze(None).expect("analyze document");
+    assert_eq!(report.statistics.non_air_blocks, 12);
+    assert_eq!(report.statistics.region_count, 1);
+    assert_eq!(report.statistics.dimensions, [16, 16, 16]);
+    assert!(report.statistics.total_volume >= 4096);
+    assert!(report.statistics.surface_cell_count > 0);
+    assert!(report.statistics.island_count > 0);
+
+    // Verify materials
+    assert_eq!(report.materials.len(), 2); // stone and granite
+    let stone = report
+        .materials
+        .iter()
+        .find(|m| m.id == "minecraft:stone")
+        .unwrap();
+    assert_eq!(stone.count, 11); // 10 in row + 1 bump
+    assert_eq!(stone.stacks_64, 0);
+    assert_eq!(stone.remainder, 11);
+    assert!((stone.percentage - (11.0 / 12.0 * 100.0)).abs() < 0.1);
+
+    let granite = report
+        .materials
+        .iter()
+        .find(|m| m.id == "minecraft:granite")
+        .unwrap();
+    assert_eq!(granite.count, 1);
+    assert_eq!(granite.stacks_64, 0);
+    assert_eq!(granite.remainder, 1);
+    assert!((granite.percentage - (1.0 / 12.0 * 100.0)).abs() < 0.1);
+
+    // Verify features breakdown
+    assert!(!report.statistics.feature_counts.is_empty());
+}

@@ -24,6 +24,8 @@ export const Sidebar: React.FC = () => {
     runDiffWithFile,
     toggleDiffMode,
     selectDiff,
+    analysisReport,
+    runAnalysis,
   } = useSchematicStore();
 
   const [inspectCoords, setInspectCoords] = useState<{ x: number; y: number; z: number }>({
@@ -31,6 +33,35 @@ export const Sidebar: React.FC = () => {
     y: 0,
     z: 0,
   });
+  const [materialSearch, setMaterialSearch] = useState('');
+  const [copiedCsv, setCopiedCsv] = useState(false);
+
+  const handleCopyCsv = () => {
+    if (!analysisReport) return;
+    const header = 'Block,Count,Stacks (64),Remainder,Percentage (%)\n';
+    const rows = analysisReport.materials
+      .map(
+        (m) =>
+          `"${m.id.replace(/"/g, '""')}",${m.count},${m.stacks_64},${m.remainder},${m.percentage.toFixed(2)}`,
+      )
+      .join('\n');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(header + rows);
+      }
+    } catch {
+      // ignore clipboard error in unpermitted environments
+    }
+    setCopiedCsv(true);
+    setTimeout(() => setCopiedCsv(false), 2000);
+  };
+
+  const filteredMaterials = analysisReport
+    ? analysisReport.materials.filter((m) =>
+        m.id.toLowerCase().includes(materialSearch.toLowerCase()) ||
+        m.block_state.toLowerCase().includes(materialSearch.toLowerCase()),
+      )
+    : [];
 
   if (!document) {
     return (
@@ -121,6 +152,13 @@ export const Sidebar: React.FC = () => {
               {currentDiff.total_added + currentDiff.total_removed + currentDiff.total_modified}
             </span>
           )}
+        </button>
+        <button
+          className={`sidebar-tab-btn ${activeTab === 'analysis' ? 'active' : ''}`}
+          data-testid="tab-analysis"
+          onClick={() => setActiveTab('analysis')}
+        >
+          Analysis
         </button>
       </div>
 
@@ -595,6 +633,254 @@ export const Sidebar: React.FC = () => {
           ) : (
             <div className="empty-diff text-muted" data-testid="no-diff-run" style={{ marginTop: '12px' }}>
               <p>Compare against the initial source document or load another .litematic to inspect differences.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 5: ANALYSIS */}
+      {activeTab === 'analysis' && (
+        <div className="panel" data-testid="analysis-panel">
+          <div
+            className="analysis-header"
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '12px',
+            }}
+          >
+            <h3 style={{ margin: 0 }}>Structure Analysis</h3>
+            <button
+              className="btn btn-sm btn-outline"
+              data-testid="refresh-analysis-btn"
+              onClick={() => runAnalysis()}
+            >
+              Refresh
+            </button>
+          </div>
+
+          {analysisReport ? (
+            <div className="analysis-content" data-testid="analysis-content">
+              {/* Structural Statistics Cards */}
+              <div className="analysis-stats-section">
+                <h4
+                  style={{
+                    margin: '8px 0',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  Metrics & Geometry
+                </h4>
+                <div className="diff-stat-grid" data-testid="analysis-metrics-grid">
+                  <div className="stat-card" data-testid="metric-dimensions">
+                    <span
+                      className="stat-value font-mono"
+                      style={{ fontSize: '0.75rem' }}
+                    >
+                      {analysisReport.statistics.dimensions.join('×')}
+                    </span>
+                    <span className="stat-label">Size (X×Y×Z)</span>
+                  </div>
+                  <div className="stat-card" data-testid="metric-volume">
+                    <span className="stat-value font-mono">
+                      {analysisReport.statistics.total_volume.toLocaleString()}
+                    </span>
+                    <span className="stat-label">Volume</span>
+                  </div>
+                  <div className="stat-card" data-testid="metric-non-air">
+                    <span className="stat-value font-mono text-success">
+                      {analysisReport.statistics.non_air_blocks.toLocaleString()}
+                    </span>
+                    <span className="stat-label">Non-Air</span>
+                  </div>
+                  <div className="stat-card" data-testid="metric-density">
+                    <span className="stat-value font-mono">
+                      {analysisReport.statistics.fill_density.toFixed(1)}%
+                    </span>
+                    <span className="stat-label">Fill Density</span>
+                  </div>
+                </div>
+
+                <div className="diff-stat-grid" style={{ marginTop: '6px' }}>
+                  <div className="stat-card" data-testid="metric-surface">
+                    <span className="stat-value font-mono">
+                      {analysisReport.statistics.surface_cell_count.toLocaleString()}
+                    </span>
+                    <span className="stat-label">Surface Voxels</span>
+                  </div>
+                  <div className="stat-card" data-testid="metric-islands">
+                    <span className="stat-value font-mono">
+                      {analysisReport.statistics.island_count}
+                    </span>
+                    <span className="stat-label">Islands</span>
+                  </div>
+                  <div className="stat-card" data-testid="metric-block-entities">
+                    <span className="stat-value font-mono">
+                      {analysisReport.statistics.total_block_entities}
+                    </span>
+                    <span className="stat-label">Block Entities</span>
+                  </div>
+                  <div className="stat-card" data-testid="metric-entities">
+                    <span className="stat-value font-mono">
+                      {analysisReport.statistics.total_entities}
+                    </span>
+                    <span className="stat-label">Entities</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Surface Features */}
+              <div
+                className="analysis-features-section"
+                style={{ marginTop: '14px' }}
+              >
+                <h4
+                  style={{
+                    margin: '8px 0',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  Surface Topology & Features
+                </h4>
+                <div className="keys-badges" data-testid="feature-badges">
+                  {Object.entries(analysisReport.statistics.feature_counts).map(
+                    ([kind, count]) => (
+                      <span
+                        key={kind}
+                        className="key-badge"
+                        data-testid={`feature-badge-${kind.toLowerCase()}`}
+                      >
+                        {kind}: {count}
+                      </span>
+                    ),
+                  )}
+                  {Object.keys(analysisReport.statistics.feature_counts).length ===
+                    0 && (
+                    <span className="text-muted text-xs">
+                      No surface features detected
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Materials Breakdown */}
+              <div
+                className="analysis-materials-section"
+                style={{ marginTop: '16px' }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '8px',
+                  }}
+                >
+                  <h4
+                    style={{
+                      margin: 0,
+                      fontSize: '0.8rem',
+                      color: 'var(--text-muted)',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Materials ({analysisReport.materials.length} types)
+                  </h4>
+                  <button
+                    className="btn btn-xs btn-secondary"
+                    data-testid="copy-materials-csv"
+                    onClick={handleCopyCsv}
+                  >
+                    {copiedCsv ? 'Copied CSV!' : 'Copy CSV'}
+                  </button>
+                </div>
+
+                <input
+                  type="text"
+                  placeholder="Filter materials..."
+                  className="coord-input"
+                  data-testid="material-search"
+                  value={materialSearch}
+                  onChange={(e) => setMaterialSearch(e.target.value)}
+                  style={{
+                    width: '100%',
+                    marginBottom: '8px',
+                    boxSizing: 'border-box',
+                  }}
+                />
+
+                <div
+                  className="materials-table-wrapper"
+                  style={{ maxHeight: '280px', overflowY: 'auto' }}
+                >
+                  <table className="props-table" data-testid="materials-table">
+                    <thead>
+                      <tr>
+                        <th>Block</th>
+                        <th style={{ textAlign: 'right' }}>Count</th>
+                        <th style={{ textAlign: 'right' }}>Stacks (64)</th>
+                        <th style={{ textAlign: 'right' }}>%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredMaterials.map((mat, idx) => (
+                        <tr
+                          key={`${mat.id}-${idx}`}
+                          data-testid={`material-row-${idx}`}
+                        >
+                          <td
+                            className="font-mono text-xs"
+                            style={{ wordBreak: 'break-all' }}
+                            title={mat.block_state}
+                          >
+                            {mat.id.replace(/^minecraft:/, '')}
+                          </td>
+                          <td
+                            style={{ textAlign: 'right' }}
+                            className="font-mono"
+                          >
+                            {mat.count.toLocaleString()}
+                          </td>
+                          <td
+                            style={{ textAlign: 'right' }}
+                            className="font-mono text-muted text-xs"
+                          >
+                            {mat.stacks_64 > 0
+                              ? `${mat.stacks_64}st + ${mat.remainder}`
+                              : `${mat.remainder}`}
+                          </td>
+                          <td
+                            style={{ textAlign: 'right' }}
+                            className="font-mono text-xs"
+                          >
+                            {mat.percentage.toFixed(1)}%
+                          </td>
+                        </tr>
+                      ))}
+                      {filteredMaterials.length === 0 && (
+                        <tr>
+                          <td
+                            colSpan={4}
+                            className="text-muted text-xs"
+                            style={{ textAlign: 'center', padding: '8px' }}
+                          >
+                            No matching materials
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-muted" data-testid="loading-analysis">
+              Loading structure analysis...
             </div>
           )}
         </div>

@@ -17,6 +17,7 @@ import {
   DocumentInspection,
   Diagnostic,
   DocumentDiff,
+  AnalysisReport,
 } from '../engine/schematicEngine';
 import { WorkerMessage, WorkerResponse } from './schematic.worker';
 
@@ -166,6 +167,10 @@ export class SchematicWorkerClient {
 
   async diffWithLitematic(buffer: ArrayBuffer): Promise<DocumentDiff> {
     return this.send({ type: 'DIFF_WITH_LITEMATIC', buffer });
+  }
+
+  async analyzeDocument(regionId?: string): Promise<AnalysisReport> {
+    return this.send({ type: 'ANALYZE_DOCUMENT', regionId });
   }
 
   terminate(): void {

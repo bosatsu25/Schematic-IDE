@@ -189,5 +189,22 @@ test.describe('End-to-End Litematic Browser Workflow', () => {
     await expect(page.getByTestId('viewport-canvas')).toBeVisible();
     const structBlockCount = await page.getByTestId('region-block-count').textContent();
     expect(parseInt(structBlockCount || '0', 10)).toBe(18);
+
+    // 15. Material & Structure Analysis UI Verification (Wave 8E)
+    await page.getByTestId('tab-analysis').click();
+    await expect(page.getByTestId('analysis-panel')).toBeVisible();
+    await expect(page.getByTestId('analysis-metrics-grid')).toBeVisible();
+    await expect(page.getByTestId('metric-dimensions')).toContainText('16×16×16');
+    await expect(page.getByTestId('metric-non-air')).toContainText('18');
+    await expect(page.getByTestId('feature-badges')).toBeVisible();
+    await expect(page.getByTestId('materials-table')).toBeVisible();
+
+    // Verify materials table search filtering
+    await page.getByTestId('material-search').fill('diorite');
+    await expect(page.getByTestId('materials-table')).toContainText('diorite');
+
+    // Test Copy CSV
+    await page.getByTestId('copy-materials-csv').click();
+    await expect(page.getByTestId('copy-materials-csv')).toHaveText('Copied CSV!');
   });
 });

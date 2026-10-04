@@ -57,6 +57,21 @@ pub struct LitematicDocument {
 }
 
 impl LitematicDocument {
+    pub fn new(document: Document) -> Self {
+        Self::from_document(document, 2975)
+    }
+
+    pub fn from_document(document: Document, data_version: i32) -> Self {
+        Self {
+            data_version,
+            version: 6,
+            document,
+            raw_metadata: BTreeMap::new(),
+            raw_root_unknown: BTreeMap::new(),
+            raw_regions: BTreeMap::new(),
+        }
+    }
+
     pub fn parse(bytes: &[u8]) -> Result<Self, FormatError> {
         let (_root_name, root_tag) = decode_gzip_or_raw(bytes)?;
         let root_compound = root_tag.as_compound().ok_or_else(|| {

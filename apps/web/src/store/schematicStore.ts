@@ -8,10 +8,12 @@ import {
   BlockInspection,
   DocumentInspection,
   Diagnostic,
+  DocumentDiff,
+  BlockDiff,
 } from '../engine/schematicEngine';
 import { SchematicWorkerClient } from '../worker/workerClient';
 
-export type SidebarTab = 'regions' | 'inspector' | 'problems';
+export type SidebarTab = 'regions' | 'inspector' | 'problems' | 'diff';
 
 export interface EditorState {
   client: SchematicWorkerClient;
@@ -29,6 +31,9 @@ export interface EditorState {
   docInspection: DocumentInspection | null;
   diagnostics: Diagnostic[];
   clipboardCount: number | null;
+  currentDiff: DocumentDiff | null;
+  diffMode: boolean;
+  selectedDiff: BlockDiff | null;
 
   init: () => Promise<void>;
   loadFile: (file: File) => Promise<void>;
@@ -41,6 +46,10 @@ export interface EditorState {
   inspectDocument: () => Promise<void>;
   validateDocument: () => Promise<void>;
   selectDiagnosticPosition: (diag: Diagnostic) => Promise<void>;
+  runDiffWithSource: () => Promise<void>;
+  runDiffWithFile: (file: File) => Promise<void>;
+  toggleDiffMode: () => void;
+  selectDiff: (diff: BlockDiff) => void;
   previewReplace: (fromBlock: string, toBlock: string) => Promise<void>;
   previewFill: (block: string) => Promise<void>;
   copySelection: () => Promise<number | null>;
@@ -85,6 +94,9 @@ export const useSchematicStore = create<EditorState>((set, get) => {
     docInspection: null,
     diagnostics: [],
     clipboardCount: null,
+    currentDiff: null,
+    diffMode: false,
+    selectedDiff: null,
 
     init: async () => {
       try {
@@ -149,6 +161,47 @@ export const useSchematicStore = create<EditorState>((set, get) => {
         await get().inspectBlock(localX, localY, localZ);
       }
       set({ activeTab: 'inspector' });
+    },
+
+    runDiffWithSource: async () => {
+      set({ loading: true, error: null });
+      try {
+        const diff = await client.diffWithSource();
+        set({ currentDiff: diff, diffMode: true, loading: false, activeTab: 'diff' });
+      } catch (err: unknown) {
+        set({
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+      }
+    },
+
+    runDiffWithFile: async (file: File) => {
+      set({ loading: true, error: null });
+      try {
+        const buffer = await file.arrayBuffer();
+        const diff = await client.diffWithLitematic(buffer);
+        set({ currentDiff: diff, diffMode: true, loading: false, activeTab: 'diff' });
+      } catch (err: unknown) {
+        set({
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+      }
+    },
+
+    toggleDiffMode: () => {
+      set((state) => ({ diffMode: !state.diffMode }));
+    },
+
+    selectDiff: (diff: BlockDiff) => {
+      set({
+        selectedDiff: diff,
+        selection: {
+          min: [diff.position[0], diff.position[1], diff.position[2]],
+          max: [diff.position[0], diff.position[1], diff.position[2]],
+        },
+      });
     },
 
     loadFile: async (file: File) => {

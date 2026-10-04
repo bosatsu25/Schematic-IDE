@@ -18,6 +18,12 @@ export interface SelectionBoxCoords {
   max: [number, number, number];
 }
 
+export interface DiffOverlay {
+  added_positions?: [number, number, number][];
+  removed_positions?: [number, number, number][];
+  modified_positions?: [number, number, number][];
+}
+
 export class VoxelRenderer {
   private canvas?: HTMLCanvasElement;
   private renderer?: THREE.WebGLRenderer;
@@ -26,6 +32,7 @@ export class VoxelRenderer {
   private voxelGroup: THREE.Group;
   private wireframeGroup: THREE.Group;
   private previewHighlightGroup: THREE.Group;
+  private diffHighlightGroup: THREE.Group;
   private selectionBoxMesh?: THREE.LineSegments;
   private regionBoxMesh?: THREE.LineSegments;
   private animFrameId?: number;
@@ -54,10 +61,12 @@ export class VoxelRenderer {
     this.voxelGroup = new THREE.Group();
     this.wireframeGroup = new THREE.Group();
     this.previewHighlightGroup = new THREE.Group();
+    this.diffHighlightGroup = new THREE.Group();
 
     this.scene.add(this.voxelGroup);
     this.scene.add(this.wireframeGroup);
     this.scene.add(this.previewHighlightGroup);
+    this.scene.add(this.diffHighlightGroup);
 
     // Grid helper
     const grid = new THREE.GridHelper(32, 32, 0x444455, 0x222233);
@@ -242,6 +251,66 @@ export class VoxelRenderer {
       minZ + sizeZ / 2,
     );
     this.wireframeGroup.add(this.selectionBoxMesh);
+    this.render();
+  }
+
+  setDiffOverlay(overlay: DiffOverlay | null): void {
+    while (this.diffHighlightGroup.children.length > 0) {
+      const child = this.diffHighlightGroup.children.pop()!;
+      if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+        child.geometry.dispose();
+        if (Array.isArray(child.material)) {
+          child.material.forEach((m) => m.dispose());
+        } else {
+          child.material.dispose();
+        }
+      }
+    }
+
+    if (!overlay) {
+      this.render();
+      return;
+    }
+
+    const boxGeom = new THREE.BoxGeometry(1.04, 1.04, 1.04);
+    const boxEdges = new THREE.EdgesGeometry(boxGeom);
+
+    if (overlay.added_positions && overlay.added_positions.length > 0) {
+      const addedMat = new THREE.LineBasicMaterial({ color: 0x22c55e, linewidth: 2 });
+      for (const pos of overlay.added_positions) {
+        const seg = new THREE.LineSegments(boxEdges, addedMat);
+        seg.position.set(pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
+        this.diffHighlightGroup.add(seg);
+      }
+    }
+
+    if (overlay.modified_positions && overlay.modified_positions.length > 0) {
+      const modMat = new THREE.LineBasicMaterial({ color: 0xf59e0b, linewidth: 2 });
+      for (const pos of overlay.modified_positions) {
+        const seg = new THREE.LineSegments(boxEdges, modMat);
+        seg.position.set(pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
+        this.diffHighlightGroup.add(seg);
+      }
+    }
+
+    if (overlay.removed_positions && overlay.removed_positions.length > 0) {
+      const remEdgesMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 2 });
+      const remFillMat = new THREE.MeshBasicMaterial({
+        color: 0xef4444,
+        transparent: true,
+        opacity: 0.35,
+      });
+      for (const pos of overlay.removed_positions) {
+        const seg = new THREE.LineSegments(boxEdges, remEdgesMat);
+        seg.position.set(pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
+        this.diffHighlightGroup.add(seg);
+
+        const fill = new THREE.Mesh(boxGeom, remFillMat);
+        fill.position.set(pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
+        this.diffHighlightGroup.add(fill);
+      }
+    }
+
     this.render();
   }
 

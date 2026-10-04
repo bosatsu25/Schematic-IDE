@@ -16,6 +16,7 @@ import {
   BlockInspection,
   DocumentInspection,
   Diagnostic,
+  DocumentDiff,
 } from '../engine/schematicEngine';
 import { WorkerMessage, WorkerResponse } from './schematic.worker';
 
@@ -147,6 +148,14 @@ export class SchematicWorkerClient {
 
   async validateDocument(): Promise<Diagnostic[]> {
     return this.send({ type: 'VALIDATE_DOCUMENT' });
+  }
+
+  async diffWithSource(): Promise<DocumentDiff> {
+    return this.send({ type: 'DIFF_WITH_SOURCE' });
+  }
+
+  async diffWithLitematic(buffer: ArrayBuffer): Promise<DocumentDiff> {
+    return this.send({ type: 'DIFF_WITH_LITEMATIC', buffer });
   }
 
   terminate(): void {

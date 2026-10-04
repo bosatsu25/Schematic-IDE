@@ -295,3 +295,48 @@ fn test_structural_editing_session() {
     session.undo().expect("undo mirror");
     session.undo().expect("undo rotate");
 }
+
+#[test]
+fn test_diff_with_source_in_session() {
+    let mut session = Session::new();
+    let bytes = create_sample_litematic();
+    session.load_litematic(&bytes).expect("load litematic");
+
+    // Before edits: diff with source is empty
+    let diff_initial = session.diff_with_source().expect("diff with source");
+    assert_eq!(diff_initial.total_added, 0);
+    assert_eq!(diff_initial.total_removed, 0);
+    assert_eq!(diff_initial.total_modified, 0);
+
+    // Perform an edit: modify [5, 5, 5] (which was stone) to diamond_block
+    let fill_mod = schematic_wasm::FillRequest {
+        region_id: "MainRegion".to_string(),
+        selection: SelectionBounds {
+            min: [5, 5, 5],
+            max: [5, 5, 5],
+        },
+        block: "minecraft:diamond_block".to_string(),
+    };
+    session.preview_fill(fill_mod).expect("preview fill");
+    session.commit_preview().expect("commit fill");
+
+    // Perform an edit: add [5, 6, 5] (which was air) as gold_block
+    let fill_add = schematic_wasm::FillRequest {
+        region_id: "MainRegion".to_string(),
+        selection: SelectionBounds {
+            min: [5, 6, 5],
+            max: [5, 6, 5],
+        },
+        block: "minecraft:gold_block".to_string(),
+    };
+    session.preview_fill(fill_add).expect("preview fill add");
+    session.commit_preview().expect("commit fill add");
+
+    // After commit: diff with source has 1 added and 1 modified block
+    let diff_edited = session
+        .diff_with_source()
+        .expect("diff with source after edit");
+    assert_eq!(diff_edited.total_modified, 1);
+    assert_eq!(diff_edited.total_added, 1);
+    assert_eq!(diff_edited.block_diffs.len(), 2);
+}

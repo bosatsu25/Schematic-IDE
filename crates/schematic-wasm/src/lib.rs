@@ -1,5 +1,8 @@
 pub mod session;
 
+pub use schematic_diff::{
+    BlockDiff, DiffBlockState, DiffKind, DocumentDiff, EntityDiff, RegionDiffSummary,
+};
 pub use session::{
     BlockInspection, BlockInspectionRequest, CleanupRequest, CopyRequest, Diagnostic,
     DiagnosticSeverity, DocumentInspection, DocumentMetadataInspection, DocumentSummary,
@@ -439,6 +442,41 @@ mod wasm_exports {
             match session.validate_document() {
                 Ok(diagnostics) => {
                     session.set_json_response(&diagnostics);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_diff_with_source() -> i32 {
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.diff_with_source() {
+                Ok(diff) => {
+                    session.set_json_response(&diff);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_diff_with_litematic(ptr: *const u8, len: usize) -> i32 {
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.diff_with_litematic(bytes) {
+                Ok(diff) => {
+                    session.set_json_response(&diff);
                     0
                 }
                 Err(e) => {

@@ -209,4 +209,39 @@ describe('SchematicEngine WASM wrapper', () => {
     const undoHist = engine.undo();
     expect(undoHist.can_undo).toBe(true);
   });
+
+  it('computes canonical structural diff against source and another file', () => {
+    // Reload fresh sample document
+    engine.loadLitematic(sampleBytes);
+
+    // Initial diff with source should be empty (0 changes)
+    const initialDiff = engine.diffWithSource();
+    expect(initialDiff.total_added).toBe(0);
+    expect(initialDiff.total_removed).toBe(0);
+    expect(initialDiff.total_modified).toBe(0);
+    expect(initialDiff.total_unchanged).toBe(12);
+
+    // Perform an edit: fill a new block at (14, 14, 14)
+    engine.previewFill({
+      region_id: 'MainRegion',
+      selection: {
+        min: [14, 14, 14],
+        max: [14, 14, 14],
+      },
+      block: 'minecraft:emerald_block',
+    });
+    engine.commitPreview();
+
+    // Now diff with source has 1 added block
+    const editedDiff = engine.diffWithSource();
+    expect(editedDiff.total_added).toBe(1);
+    expect(editedDiff.block_diffs.length).toBe(1);
+    expect(editedDiff.block_diffs[0].kind).toBe('Added');
+    expect(editedDiff.block_diffs[0].position).toEqual([14, 14, 14]);
+    expect(editedDiff.block_diffs[0].after?.name).toBe('minecraft:emerald_block');
+
+    // Diffing current edited document with original sampleBytes produces 1 added block
+    const fileDiff = engine.diffWithLitematic(sampleBytes);
+    expect(fileDiff.total_added).toBe(1);
+  });
 });

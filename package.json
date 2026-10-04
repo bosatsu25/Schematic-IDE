@@ -12,6 +12,7 @@
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @schematic-ide/web test:e2e",
     "build": "pnpm -r build"
   },
   "devDependencies": {

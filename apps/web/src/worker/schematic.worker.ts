@@ -34,7 +34,9 @@ export type WorkerMessage =
   | { id: string; type: 'GET_STATUS' }
   | { id: string; type: 'INSPECT_BLOCK'; req: BlockInspectionRequest }
   | { id: string; type: 'INSPECT_DOCUMENT' }
-  | { id: string; type: 'VALIDATE_DOCUMENT' };
+  | { id: string; type: 'VALIDATE_DOCUMENT' }
+  | { id: string; type: 'DIFF_WITH_SOURCE' }
+  | { id: string; type: 'DIFF_WITH_LITEMATIC'; buffer: ArrayBuffer };
 
 export interface WorkerResponse {
   id: string;
@@ -155,6 +157,16 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       }
       case 'VALIDATE_DOCUMENT': {
         const res = engine.validateDocument();
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'DIFF_WITH_SOURCE': {
+        const res = engine.diffWithSource();
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'DIFF_WITH_LITEMATIC': {
+        const res = engine.diffWithLitematic(new Uint8Array(msg.buffer));
         self.postMessage({ id: msg.id, ok: true, data: res });
         break;
       }

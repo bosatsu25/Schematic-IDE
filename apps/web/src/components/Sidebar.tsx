@@ -18,6 +18,12 @@ export const Sidebar: React.FC = () => {
     inspectBlock,
     validateDocument,
     selectDiagnosticPosition,
+    currentDiff,
+    diffMode,
+    runDiffWithSource,
+    runDiffWithFile,
+    toggleDiffMode,
+    selectDiff,
   } = useSchematicStore();
 
   const [inspectCoords, setInspectCoords] = useState<{ x: number; y: number; z: number }>({
@@ -101,6 +107,18 @@ export const Sidebar: React.FC = () => {
               data-testid="problems-badge"
             >
               {diagnostics.length}
+            </span>
+          )}
+        </button>
+        <button
+          className={`sidebar-tab-btn ${activeTab === 'diff' ? 'active' : ''}`}
+          data-testid="tab-diff"
+          onClick={() => setActiveTab('diff')}
+        >
+          Diff
+          {currentDiff && (currentDiff.total_added + currentDiff.total_removed + currentDiff.total_modified > 0) && (
+            <span className="tab-badge badge-diff" data-testid="diff-badge">
+              {currentDiff.total_added + currentDiff.total_removed + currentDiff.total_modified}
             </span>
           )}
         </button>
@@ -461,6 +479,122 @@ export const Sidebar: React.FC = () => {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 4: CANONICAL DIFF */}
+      {activeTab === 'diff' && (
+        <div className="panel" data-testid="diff-panel">
+          <div className="panel-header-with-actions">
+            <h3>Structural Diff</h3>
+            <div className="diff-action-buttons">
+              <button
+                className="btn btn-sm btn-primary"
+                data-testid="diff-source-btn"
+                onClick={() => runDiffWithSource()}
+              >
+                Diff vs Source
+              </button>
+              <label className="btn btn-sm btn-secondary file-upload-label" style={{ cursor: 'pointer' }}>
+                Compare File...
+                <input
+                  type="file"
+                  accept=".litematic"
+                  style={{ display: 'none' }}
+                  data-testid="diff-file-input"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) runDiffWithFile(f);
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+
+          {currentDiff ? (
+            <div className="diff-content" data-testid="diff-content" style={{ marginTop: '12px' }}>
+              <div className="diff-controls-bar">
+                <button
+                  className={`btn btn-sm ${diffMode ? 'btn-success' : 'btn-outline'}`}
+                  data-testid="toggle-diff-overlay"
+                  onClick={toggleDiffMode}
+                >
+                  {diffMode ? '✓ 3D Overlay ON' : '3D Overlay OFF'}
+                </button>
+              </div>
+
+              <div className="diff-stat-grid" data-testid="diff-stats">
+                <div className="stat-card stat-added">
+                  <span className="stat-value font-mono">+{currentDiff.total_added}</span>
+                  <span className="stat-label">Added</span>
+                </div>
+                <div className="stat-card stat-removed">
+                  <span className="stat-value font-mono">-{currentDiff.total_removed}</span>
+                  <span className="stat-label">Removed</span>
+                </div>
+                <div className="stat-card stat-modified">
+                  <span className="stat-value font-mono">~{currentDiff.total_modified}</span>
+                  <span className="stat-label">Modified</span>
+                </div>
+                <div className="stat-card stat-unchanged">
+                  <span className="stat-value font-mono">{currentDiff.total_unchanged}</span>
+                  <span className="stat-label">Unchanged</span>
+                </div>
+              </div>
+
+              {currentDiff.block_diffs.length === 0 ? (
+                <div className="empty-diff text-muted" data-testid="empty-diff">
+                  No structural differences detected.
+                </div>
+              ) : (
+                <div className="diff-list" data-testid="diff-list">
+                  <h4 style={{ margin: '8px 0' }}>Changed Blocks ({currentDiff.block_diffs.length})</h4>
+                  <div className="diff-items-container">
+                    {currentDiff.block_diffs.map((b, idx) => (
+                      <div
+                        key={`${b.region_id}-${b.position.join(',')}-${idx}`}
+                        className={`diff-item diff-kind-${b.kind.toLowerCase()}`}
+                        data-testid={`diff-item-${idx}`}
+                        onClick={() => selectDiff(b)}
+                      >
+                        <div className="diff-item-header">
+                          <span className={`diff-kind-badge badge-${b.kind.toLowerCase()}`}>
+                            {b.kind}
+                          </span>
+                          <span className="font-mono text-sm">
+                            ({b.position[0]}, {b.position[1]}, {b.position[2]})
+                          </span>
+                        </div>
+                        <div className="diff-item-details text-xs">
+                          {b.kind === 'Added' && (
+                            <span className="diff-after text-success">
+                              + {b.after?.name}
+                            </span>
+                          )}
+                          {b.kind === 'Removed' && (
+                            <span className="diff-before text-error">
+                              - {b.before?.name}
+                            </span>
+                          )}
+                          {b.kind === 'Modified' && (
+                            <span className="diff-mod">
+                              <span className="text-error">{b.before?.name}</span>
+                              {' → '}
+                              <span className="text-warning">{b.after?.name}</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="empty-diff text-muted" data-testid="no-diff-run" style={{ marginTop: '12px' }}>
+              <p>Compare against the initial source document or load another .litematic to inspect differences.</p>
             </div>
           )}
         </div>

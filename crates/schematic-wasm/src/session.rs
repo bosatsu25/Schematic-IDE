@@ -6,7 +6,9 @@ use schematic_core::{
     Selection,
 };
 use schematic_edit::{EditWorkspace, IslandCleanupRequest, ReplaceCommand};
-use schematic_format::LitematicDocument;
+use schematic_format::{LitematicDocument, NbtTag};
+use schematic_validate::validate_document as core_validate_document;
+pub use schematic_validate::{Diagnostic, DiagnosticSeverity, Fixability};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -89,6 +91,54 @@ pub struct HistorySummary {
     pub can_redo: bool,
     pub has_preview: bool,
     pub is_dirty: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockInspectionRequest {
+    pub region_id: String,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockInspection {
+    pub region_id: String,
+    pub local_position: [i32; 3],
+    pub world_position: [i32; 3],
+    pub block_id: String,
+    pub properties: BTreeMap<String, String>,
+    pub palette_index: u32,
+    pub block_entity: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DocumentInspection {
+    pub metadata: DocumentMetadataInspection,
+    pub regions: Vec<RegionInspectionSummary>,
+    pub total_entities: usize,
+    pub total_block_entities: usize,
+    pub raw_nbt_keys: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DocumentMetadataInspection {
+    pub name: Option<String>,
+    pub author: Option<String>,
+    pub description: Option<String>,
+    pub minecraft_data_version: i32,
+    pub version: i32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegionInspectionSummary {
+    pub name: String,
+    pub origin: [i32; 3],
+    pub size: [u32; 3],
+    pub palette_size: usize,
+    pub non_air_blocks: usize,
+    pub block_entity_count: usize,
+    pub entity_count: usize,
 }
 
 pub struct Session {
@@ -436,6 +486,203 @@ impl Session {
         let ws = self.workspace.as_ref().ok_or("No document loaded")?;
         let litematic = self.litematic.as_ref().ok_or("No litematic template")?;
         litematic.export(ws.committed()).map_err(|e| e.to_string())
+    }
+
+    pub fn inspect_block(
+        &self,
+        req: &BlockInspectionRequest,
+    ) -> Result<Option<BlockInspection>, String> {
+        let ws = self
+            .workspace
+            .as_ref()
+            .ok_or_else(|| "No document loaded".to_string())?;
+        let doc = ws.committed();
+        let region_id = RegionId::new(&req.region_id);
+        let region = match doc.region(&region_id) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let local_pos = BlockPosition::new(req.x as i64, req.y as i64, req.z as i64);
+        let pal_idx = match region.block_index_at(local_pos) {
+            Ok(Some(idx)) => idx,
+            Ok(None) => return Ok(None),
+            Err(_) => return Ok(None),
+        };
+
+        let block_state = match region.palette().get(pal_idx) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let mut properties = BTreeMap::new();
+        for prop in block_state.properties() {
+            properties.insert(prop.name().to_string(), prop.value().to_string());
+        }
+
+        let world_pos = region
+            .local_to_world(local_pos)
+            .map(|p| [p.x, p.y, p.z])
+            .unwrap_or([
+                region.origin().x + req.x,
+                region.origin().y + req.y,
+                region.origin().z + req.z,
+            ]);
+
+        let mut block_entity_json = None;
+        if let Some(litematic) = &self.litematic {
+            if let Some(raw_region) = litematic.raw_regions.get(&region_id) {
+                for tag in &raw_region.block_entities {
+                    if let Some(compound) = tag.as_compound() {
+                        let bx = compound.get("x").and_then(|t| match t {
+                            NbtTag::Int(v) => Some(*v),
+                            NbtTag::Short(v) => Some(*v as i32),
+                            _ => None,
+                        });
+                        let by = compound.get("y").and_then(|t| match t {
+                            NbtTag::Int(v) => Some(*v),
+                            NbtTag::Short(v) => Some(*v as i32),
+                            _ => None,
+                        });
+                        let bz = compound.get("z").and_then(|t| match t {
+                            NbtTag::Int(v) => Some(*v),
+                            NbtTag::Short(v) => Some(*v as i32),
+                            _ => None,
+                        });
+
+                        if (bx == Some(req.x) && by == Some(req.y) && bz == Some(req.z))
+                            || (bx == Some(world_pos[0])
+                                && by == Some(world_pos[1])
+                                && bz == Some(world_pos[2]))
+                        {
+                            block_entity_json = Some(nbt_to_json(tag));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Some(BlockInspection {
+            region_id: req.region_id.clone(),
+            local_position: [req.x, req.y, req.z],
+            world_position: world_pos,
+            block_id: block_state.id().to_string(),
+            properties,
+            palette_index: pal_idx.get(),
+            block_entity: block_entity_json,
+        }))
+    }
+
+    pub fn inspect_document(&self) -> Result<DocumentInspection, String> {
+        let ws = self
+            .workspace
+            .as_ref()
+            .ok_or_else(|| "No document loaded".to_string())?;
+        let doc = ws.committed();
+        let litematic = self.litematic.as_ref();
+
+        let meta = doc.metadata();
+        let metadata = DocumentMetadataInspection {
+            name: meta.name.clone(),
+            author: meta.author.clone(),
+            description: meta.description.clone(),
+            minecraft_data_version: litematic.map(|l| l.data_version).unwrap_or(0),
+            version: litematic.map(|l| l.version).unwrap_or(0),
+        };
+
+        let mut regions = Vec::new();
+        let mut total_be = 0;
+        let mut total_ent = 0;
+
+        for r in doc.regions() {
+            let region_id = r.id();
+            let (be_count, ent_count) = if let Some(l) = litematic {
+                if let Some(raw) = l.raw_regions.get(region_id) {
+                    (raw.block_entities.len(), raw.entities.len())
+                } else {
+                    (0, 0)
+                }
+            } else {
+                (0, 0)
+            };
+            total_be += be_count;
+            total_ent += ent_count;
+
+            let mut non_air = 0;
+            let palette = r.palette();
+            for (_, chunk) in r.chunks() {
+                for idx in 0..schematic_core::CHUNK_VOLUME {
+                    if let Ok(Some(pal_idx)) = chunk.get(idx) {
+                        if let Some(state) = palette.get(pal_idx) {
+                            if !is_air(state.id()) {
+                                non_air += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            regions.push(RegionInspectionSummary {
+                name: region_id.as_str().to_string(),
+                origin: [r.origin().x, r.origin().y, r.origin().z],
+                size: [r.size().x, r.size().y, r.size().z],
+                palette_size: palette.len(),
+                non_air_blocks: non_air,
+                block_entity_count: be_count,
+                entity_count: ent_count,
+            });
+        }
+
+        let raw_nbt_keys = if let Some(l) = litematic {
+            let mut keys: Vec<String> = l.raw_root_unknown.keys().cloned().collect();
+            keys.extend(l.raw_metadata.keys().cloned());
+            keys.sort();
+            keys.dedup();
+            keys
+        } else {
+            Vec::new()
+        };
+
+        Ok(DocumentInspection {
+            metadata,
+            regions,
+            total_entities: total_ent,
+            total_block_entities: total_be,
+            raw_nbt_keys,
+        })
+    }
+
+    pub fn validate_document(&self) -> Result<Vec<Diagnostic>, String> {
+        let ws = self
+            .workspace
+            .as_ref()
+            .ok_or_else(|| "No document loaded".to_string())?;
+        Ok(core_validate_document(ws.committed()))
+    }
+}
+
+pub fn nbt_to_json(tag: &NbtTag) -> serde_json::Value {
+    match tag {
+        NbtTag::End => serde_json::Value::Null,
+        NbtTag::Byte(b) => serde_json::json!(b),
+        NbtTag::Short(s) => serde_json::json!(s),
+        NbtTag::Int(i) => serde_json::json!(i),
+        NbtTag::Long(l) => serde_json::json!(l),
+        NbtTag::Float(f) => serde_json::json!(f),
+        NbtTag::Double(d) => serde_json::json!(d),
+        NbtTag::ByteArray(bytes) => serde_json::json!(bytes),
+        NbtTag::String(s) => serde_json::json!(s),
+        NbtTag::List(_, list) => serde_json::Value::Array(list.iter().map(nbt_to_json).collect()),
+        NbtTag::Compound(map) => {
+            let mut obj = serde_json::Map::new();
+            for (k, v) in map {
+                obj.insert(k.clone(), nbt_to_json(v));
+            }
+            serde_json::Value::Object(obj)
+        }
+        NbtTag::IntArray(ints) => serde_json::json!(ints),
+        NbtTag::LongArray(longs) => serde_json::json!(longs),
     }
 }
 

@@ -26,10 +26,10 @@ See [docs/v1-gap-analysis.md](./v1-gap-analysis.md) for detailed item-by-item st
 - [PARTIAL] **Web/PWA app launches locally in browser**: Local Web app launches and runs in browser; PWA manifest and offline service worker caching to be completed in Wave 8G.
 - [PARTIAL] **Supports `.litematic`, `.schem`, and Java Structure NBT**: `.litematic` is fully supported with lossless parse/export; `.schem` and Java Structure `.nbt` to be completed in Wave 8D.
 - [PARTIAL] **Enables open, view, select, fill, replace, delete, copy, paste, move, rotate, mirror, undo, redo, inspect, analyze, validate, diff, and export**:
-  - Open, view, select, replace, delete, undo, redo, cleanup analysis, export: **DONE**
+  - Open, view, select, replace, delete, undo, redo, cleanup analysis, export, inspect, validate: **DONE**
   - Fill, copy, paste, move, rotate, mirror: **Wave 8B**
-  - Inspect, validate: **Wave 8A**
   - Diff: **Wave 8C**
+  - Multi-format: **Wave 8D**
   - Material & structural analysis: **Wave 8E**
 - [DONE] **Keeps structure data local-first**: Runs entirely in the user's browser client and WASM runtime; zero server upload or telemetry.
 - [PARTIAL] **Includes round-trip and property tests**: `.litematic` round-trip tests and domain tests exist; property-based rotation/mirror inverse tests to be completed in Wave 8B, multi-format round-trip in Wave 8D.

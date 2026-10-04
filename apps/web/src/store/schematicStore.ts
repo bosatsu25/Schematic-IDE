@@ -5,8 +5,13 @@ import {
   PreviewSummary,
   SessionStatus,
   SelectionBounds,
+  BlockInspection,
+  DocumentInspection,
+  Diagnostic,
 } from '../engine/schematicEngine';
 import { SchematicWorkerClient } from '../worker/workerClient';
+
+export type SidebarTab = 'regions' | 'inspector' | 'problems';
 
 export interface EditorState {
   client: SchematicWorkerClient;
@@ -19,6 +24,10 @@ export interface EditorState {
   error: string | null;
   loading: boolean;
   exportedBlob: Blob | null;
+  activeTab: SidebarTab;
+  inspection: BlockInspection | null;
+  docInspection: DocumentInspection | null;
+  diagnostics: Diagnostic[];
 
   init: () => Promise<void>;
   loadFile: (file: File) => Promise<void>;
@@ -26,6 +35,11 @@ export interface EditorState {
   selectRegion: (regionId: string) => Promise<void>;
   setSelection: (bounds: SelectionBounds | null) => void;
   selectAllRegion: () => void;
+  setActiveTab: (tab: SidebarTab) => void;
+  inspectBlock: (x: number, y: number, z: number, regionId?: string) => Promise<void>;
+  inspectDocument: () => Promise<void>;
+  validateDocument: () => Promise<void>;
+  selectDiagnosticPosition: (diag: Diagnostic) => Promise<void>;
   previewReplace: (fromBlock: string, toBlock: string) => Promise<void>;
   previewCleanup: (
     maxSize: number,
@@ -59,6 +73,10 @@ export const useSchematicStore = create<EditorState>((set, get) => {
     error: null,
     loading: false,
     exportedBlob: null,
+    activeTab: 'regions',
+    inspection: null,
+    docInspection: null,
+    diagnostics: [],
 
     init: async () => {
       try {
@@ -66,6 +84,63 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       } catch (err: unknown) {
         console.error('Failed to initialize worker:', err);
       }
+    },
+
+    setActiveTab: (tab: SidebarTab) => {
+      set({ activeTab: tab });
+    },
+
+    inspectBlock: async (x: number, y: number, z: number, regionId?: string) => {
+      const regId = regionId || get().selectedRegionId;
+      if (!regId) return;
+      try {
+        const inspection = await client.inspectBlock({
+          region_id: regId,
+          x,
+          y,
+          z,
+        });
+        set({ inspection });
+      } catch (err: unknown) {
+        console.error('Failed to inspect block:', err);
+      }
+    },
+
+    inspectDocument: async () => {
+      try {
+        const docInspection = await client.inspectDocument();
+        set({ docInspection });
+      } catch (err: unknown) {
+        console.error('Failed to inspect document:', err);
+      }
+    },
+
+    validateDocument: async () => {
+      try {
+        const diagnostics = await client.validateDocument();
+        set({ diagnostics });
+      } catch (err: unknown) {
+        console.error('Failed to validate document:', err);
+      }
+    },
+
+    selectDiagnosticPosition: async (diag: Diagnostic) => {
+      if (diag.region && diag.region !== get().selectedRegionId) {
+        await get().selectRegion(diag.region);
+      }
+      if (diag.position) {
+        const [x, y, z] = diag.position;
+        get().setSelection({
+          min: [x, y, z],
+          max: [x, y, z],
+        });
+        const reg = get().document?.regions.find((r) => r.name === get().selectedRegionId);
+        const localX = reg ? x - reg.origin[0] : x;
+        const localY = reg ? y - reg.origin[1] : y;
+        const localZ = reg ? z - reg.origin[2] : z;
+        await get().inspectBlock(localX, localY, localZ);
+      }
+      set({ activeTab: 'inspector' });
     },
 
     loadFile: async (file: File) => {
@@ -95,11 +170,15 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           selectedRegionId: initialRegion,
           previewSummary: null,
           selection: null,
+          inspection: null,
         });
 
         if (initialRegion) {
           await get().selectRegion(initialRegion);
         }
+
+        await get().inspectDocument();
+        await get().validateDocument();
 
         const status = await client.getStatus();
         set({ status, loading: false });
@@ -220,6 +299,8 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           meshData,
           loading: false,
         });
+        await get().inspectDocument();
+        await get().validateDocument();
       } catch (err: unknown) {
         set({
           error: err instanceof Error ? err.message : String(err),
@@ -269,6 +350,8 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           meshData,
           loading: false,
         });
+        await get().inspectDocument();
+        await get().validateDocument();
       } catch (err: unknown) {
         set({
           error: err instanceof Error ? err.message : String(err),
@@ -293,6 +376,8 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           meshData,
           loading: false,
         });
+        await get().inspectDocument();
+        await get().validateDocument();
       } catch (err: unknown) {
         set({
           error: err instanceof Error ? err.message : String(err),

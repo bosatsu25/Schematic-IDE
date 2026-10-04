@@ -28,6 +28,21 @@ test.describe('End-to-End Litematic Browser Workflow', () => {
     await expect(page.getByTestId('empty-state')).not.toBeVisible();
     await expect(page.getByTestId('viewport-canvas')).toBeVisible();
 
+    // 3.5. Wave 8A Inspection & Diagnostics verification
+    await page.getByTestId('tab-inspector').click();
+    await expect(page.getByTestId('inspector-panel')).toBeVisible();
+    await page.getByTestId('inspect-input-x').fill('0');
+    await page.getByTestId('inspect-input-y').fill('1');
+    await page.getByTestId('inspect-input-z').fill('1');
+    await page.getByTestId('inspect-btn').click();
+    await expect(page.getByTestId('inspect-block-id')).toHaveText('minecraft:stone');
+
+    await page.getByTestId('tab-problems').click();
+    await expect(page.getByTestId('problems-panel')).toBeVisible();
+
+    // Switch back to regions tab
+    await page.getByTestId('tab-regions').click();
+
     // 4. Region / Selection
     await page.getByTestId('select-all-btn').click();
     await expect(page.getByTestId('sel-min-x')).toHaveValue('0');

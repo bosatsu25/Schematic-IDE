@@ -2,6 +2,7 @@ import {
   SchematicEngine,
   ReplaceRequest,
   CleanupRequest,
+  BlockInspectionRequest,
 } from '../engine/schematicEngine';
 
 const engine = new SchematicEngine();
@@ -18,7 +19,10 @@ export type WorkerMessage =
   | { id: string; type: 'UNDO' }
   | { id: string; type: 'REDO' }
   | { id: string; type: 'EXPORT_LITEMATIC' }
-  | { id: string; type: 'GET_STATUS' };
+  | { id: string; type: 'GET_STATUS' }
+  | { id: string; type: 'INSPECT_BLOCK'; req: BlockInspectionRequest }
+  | { id: string; type: 'INSPECT_DOCUMENT' }
+  | { id: string; type: 'VALIDATE_DOCUMENT' };
 
 export interface WorkerResponse {
   id: string;
@@ -95,6 +99,21 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       case 'GET_STATUS': {
         const status = engine.getStatus();
         self.postMessage({ id: msg.id, ok: true, data: status });
+        break;
+      }
+      case 'INSPECT_BLOCK': {
+        const res = engine.inspectBlock(msg.req);
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'INSPECT_DOCUMENT': {
+        const res = engine.inspectDocument();
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'VALIDATE_DOCUMENT': {
+        const res = engine.validateDocument();
+        self.postMessage({ id: msg.id, ok: true, data: res });
         break;
       }
       default: {

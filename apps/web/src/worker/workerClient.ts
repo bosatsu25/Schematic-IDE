@@ -6,6 +6,10 @@ import {
   PreviewSummary,
   HistorySummary,
   SessionStatus,
+  BlockInspectionRequest,
+  BlockInspection,
+  DocumentInspection,
+  Diagnostic,
 } from '../engine/schematicEngine';
 import { WorkerMessage, WorkerResponse } from './schematic.worker';
 
@@ -101,6 +105,18 @@ export class SchematicWorkerClient {
 
   async getStatus(): Promise<SessionStatus> {
     return this.send({ type: 'GET_STATUS' });
+  }
+
+  async inspectBlock(req: BlockInspectionRequest): Promise<BlockInspection | null> {
+    return this.send({ type: 'INSPECT_BLOCK', req });
+  }
+
+  async inspectDocument(): Promise<DocumentInspection> {
+    return this.send({ type: 'INSPECT_DOCUMENT' });
+  }
+
+  async validateDocument(): Promise<Diagnostic[]> {
+    return this.send({ type: 'VALIDATE_DOCUMENT' });
   }
 
   terminate(): void {

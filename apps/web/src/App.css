@@ -391,3 +391,271 @@ body, html {
 .status-dirty {
   color: var(--warning-color);
 }
+
+/* Sidebar Tab Navigation */
+.sidebar-tabs {
+  display: flex;
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar-tab-btn {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 8px 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.sidebar-tab-btn:hover {
+  color: var(--text-main);
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.sidebar-tab-btn.active {
+  color: var(--accent-color);
+  border-bottom-color: var(--accent-color);
+  background-color: rgba(79, 70, 229, 0.08);
+}
+
+.tab-badge {
+  font-size: 0.7rem;
+  padding: 1px 5px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+/* Severity Badges & Pills */
+.badge-error {
+  background-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+.badge-warning {
+  background-color: #78350f;
+  color: #fde68a;
+}
+
+.badge-info {
+  background-color: #1e3a8a;
+  color: #93c5fd;
+}
+
+.text-success {
+  color: #4ade80;
+}
+
+/* Inspector Styles */
+.inspect-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.inspect-inputs {
+  display: flex;
+  gap: 6px;
+}
+
+.inspect-inputs label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.coord-input-sm {
+  width: 50px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.inspection-result {
+  background-color: var(--bg-tertiary);
+  padding: 10px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.property-section {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+}
+
+.property-section h4, .nbt-section h4, .raw-nbt-keys-section h4 {
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.props-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.props-table th, .props-table td {
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.props-table th {
+  color: var(--text-muted);
+}
+
+.nbt-section {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+}
+
+.nbt-json {
+  background-color: var(--bg-primary);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  max-height: 180px;
+  overflow: auto;
+  color: #93c5fd;
+  border: 1px solid var(--border-color);
+}
+
+.keys-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.key-badge {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-family: monospace;
+}
+
+/* Problems Panel */
+.problems-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.problems-summary {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.summary-pill {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.problems-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 250px);
+  overflow-y: auto;
+}
+
+.problem-item {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.problem-item:hover {
+  background-color: #242436;
+}
+
+.problem-item.severity-error {
+  border-left: 3px solid #ef4444;
+}
+
+.problem-item.severity-warning {
+  border-left: 3px solid #f59e0b;
+}
+
+.problem-item.severity-info {
+  border-left: 3px solid #3b82f6;
+}
+
+.problem-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.severity-badge {
+  font-size: 0.65rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.problem-code {
+  font-size: 0.75rem;
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.fixability-badge {
+  margin-left: auto;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  background-color: rgba(255, 255, 255, 0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.problem-msg {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+
+.problem-pos {
+  font-size: 0.7rem;
+  color: var(--accent-hover);
+}
+
+.btn-xs {
+  padding: 2px 6px;
+  font-size: 0.75rem;
+}
+

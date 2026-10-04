@@ -127,4 +127,86 @@ describe('SchematicEngine WASM wrapper', () => {
     const errors = diags.filter((d) => d.severity === 'Error');
     expect(errors.length).toBe(0);
   });
+
+  it('executes structural editing: fill, copy, paste, move, rotate, mirror', () => {
+    // 1. Fill 2x1x2 with oak_planks
+    const fillRes = engine.previewFill({
+      region_id: 'MainRegion',
+      selection: {
+        min: [2, 2, 2],
+        max: [3, 2, 3],
+      },
+      block: 'minecraft:oak_planks',
+    });
+    expect(fillRes.changed_count).toBe(4);
+    engine.commitPreview();
+
+    // 2. Copy selection
+    const copyCount = engine.copySelection({
+      region_id: 'MainRegion',
+      selection: {
+        min: [2, 2, 2],
+        max: [3, 2, 3],
+      },
+    });
+    expect(copyCount).toBe(4);
+
+    // 3. Paste at (6, 2, 6)
+    const pasteRes = engine.previewPaste({
+      region_id: 'MainRegion',
+      target: [6, 2, 6],
+    });
+    expect(pasteRes.changed_count).toBe(4);
+    engine.commitPreview();
+
+    // 4. Move pasted blocks by (0, 1, 0)
+    const moveRes = engine.previewMove({
+      region_id: 'MainRegion',
+      selection: {
+        min: [6, 2, 6],
+        max: [7, 2, 7],
+      },
+      delta: [0, 1, 0],
+    });
+    expect(moveRes.changed_count).toBe(8);
+    engine.commitPreview();
+
+    // 5. Clear half and Rotate by 90 deg
+    engine.previewFill({
+      region_id: 'MainRegion',
+      selection: {
+        min: [6, 3, 7],
+        max: [7, 3, 7],
+      },
+      block: 'minecraft:air',
+    });
+    engine.commitPreview();
+
+    const rotateRes = engine.previewRotate({
+      region_id: 'MainRegion',
+      selection: {
+        min: [6, 3, 6],
+        max: [7, 3, 7],
+      },
+      angle_deg: 90,
+    });
+    expect(rotateRes.can_commit).toBe(true);
+    engine.commitPreview();
+
+    // 6. Mirror along X
+    const mirrorRes = engine.previewMirror({
+      region_id: 'MainRegion',
+      selection: {
+        min: [6, 3, 6],
+        max: [7, 3, 7],
+      },
+      axis: 'x',
+    });
+    expect(mirrorRes.can_commit).toBe(true);
+    engine.commitPreview();
+
+    // 7. Undo
+    const undoHist = engine.undo();
+    expect(undoHist.can_undo).toBe(true);
+  });
 });

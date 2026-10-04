@@ -199,3 +199,99 @@ fn test_inspect_and_validate_session() {
         .collect();
     assert!(errors.is_empty(), "Expected no errors in sample document");
 }
+
+#[test]
+fn test_structural_editing_session() {
+    let raw_bytes = create_sample_litematic();
+    let mut session = Session::new();
+    session.load_litematic(&raw_bytes).expect("load litematic");
+
+    // 1. Fill 2x1x2 with oak_planks
+    let fill_req = schematic_wasm::FillRequest {
+        region_id: "MainRegion".to_string(),
+        selection: SelectionBounds {
+            min: [2, 2, 2],
+            max: [3, 2, 3],
+        },
+        block: "minecraft:oak_planks".to_string(),
+    };
+    let fill_res = session.preview_fill(fill_req).expect("preview fill");
+    assert_eq!(fill_res.changed_count, 4);
+    session.commit_preview().expect("commit fill");
+
+    // 2. Copy the 2x1x2
+    let copy_req = schematic_wasm::CopyRequest {
+        region_id: "MainRegion".to_string(),
+        selection: SelectionBounds {
+            min: [2, 2, 2],
+            max: [3, 2, 3],
+        },
+    };
+    let count = session.copy_selection(copy_req).expect("copy");
+    assert_eq!(count, 4);
+
+    // 3. Paste at (6, 2, 6)
+    let paste_req = schematic_wasm::PasteRequest {
+        region_id: "MainRegion".to_string(),
+        target: [6, 2, 6],
+    };
+    let paste_res = session.preview_paste(paste_req).expect("preview paste");
+    assert_eq!(paste_res.changed_count, 4);
+    session.commit_preview().expect("commit paste");
+
+    // 4. Move pasted blocks by (0, 1, 0)
+    let move_req = schematic_wasm::MoveRequest {
+        region_id: "MainRegion".to_string(),
+        selection: SelectionBounds {
+            min: [6, 2, 6],
+            max: [7, 2, 7],
+        },
+        delta: [0, 1, 0],
+    };
+    let move_res = session.preview_move(move_req).expect("preview move");
+    assert_eq!(move_res.changed_count, 8); // 4 cleared, 4 set
+    session.commit_preview().expect("commit move");
+
+    // 5. Rotate the moved blocks: fill a 2x1x1 bar at [6, 3, 6]..[7, 3, 6] within a 2x1x2 bounding box
+    let rotate_req = schematic_wasm::RotateRequest {
+        region_id: "MainRegion".to_string(),
+        selection: SelectionBounds {
+            min: [6, 3, 6],
+            max: [7, 3, 7],
+        },
+        angle_deg: 90,
+    };
+    // Prior to rotation, only z=6 had blocks, z=7 was empty.
+    // Clear z=7 and keep only [6, 3, 6] and [7, 3, 6]:
+    let fill_single = schematic_wasm::FillRequest {
+        region_id: "MainRegion".to_string(),
+        selection: SelectionBounds {
+            min: [6, 3, 7],
+            max: [7, 3, 7],
+        },
+        block: "minecraft:air".to_string(),
+    };
+    session.preview_fill(fill_single).expect("clear row");
+    session.commit_preview().expect("commit clear");
+
+    let rotate_res = session.preview_rotate(rotate_req).expect("preview rotate");
+    assert!(rotate_res.can_commit);
+    session.commit_preview().expect("commit rotate");
+
+    // 6. Mirror along X
+    let mirror_req = schematic_wasm::MirrorRequest {
+        region_id: "MainRegion".to_string(),
+        selection: SelectionBounds {
+            min: [6, 3, 6],
+            max: [7, 3, 7],
+        },
+        axis: "x".to_string(),
+    };
+    let mirror_res = session.preview_mirror(mirror_req).expect("preview mirror");
+    assert!(mirror_res.can_commit);
+    session.commit_preview().expect("commit mirror");
+
+    // 7. Undo mirror and rotate
+    session.undo().expect("undo mirror");
+    session.undo().expect("undo rotate");
+}

@@ -82,6 +82,14 @@ impl PatchSet {
         changes: impl IntoIterator<Item = BlockChange>,
         palette_addition: Option<(PaletteIndex, BlockState)>,
     ) -> Self {
+        Self::from_changes_with_palette_additions(region_id, changes, palette_addition)
+    }
+
+    pub fn from_changes_with_palette_additions(
+        region_id: RegionId,
+        changes: impl IntoIterator<Item = BlockChange>,
+        palette_additions: impl IntoIterator<Item = (PaletteIndex, BlockState)>,
+    ) -> Self {
         let mut grouped = BTreeMap::<(ChunkPosition, RegionId), Vec<BlockChange>>::new();
         for change in changes {
             let chunk_position = ChunkPosition::from_block_position(change.position);
@@ -98,15 +106,14 @@ impl PatchSet {
                 changes,
             })
             .collect();
-        let palette_additions = palette_addition
-            .map(|(index, state)| {
-                vec![PaletteAddition {
-                    region_id,
-                    index,
-                    state,
-                }]
+        let palette_additions = palette_additions
+            .into_iter()
+            .map(|(index, state)| PaletteAddition {
+                region_id: region_id.clone(),
+                index,
+                state,
             })
-            .unwrap_or_default();
+            .collect();
         Self {
             patches,
             palette_additions,
@@ -234,10 +241,15 @@ impl PatchSet {
             }
         }
 
+        let mut expected_indices: std::collections::BTreeMap<&RegionId, usize> =
+            std::collections::BTreeMap::new();
         for addition in &self.palette_additions {
             let region = document
                 .region(&addition.region_id)
                 .ok_or_else(|| PatchError::MissingRegion(addition.region_id.clone()))?;
+            let next_idx = expected_indices
+                .entry(&addition.region_id)
+                .or_insert_with(|| region.palette().len());
             match region.palette().get(addition.index) {
                 Some(state) if state == &addition.state => {}
                 Some(_) => {
@@ -247,8 +259,11 @@ impl PatchSet {
                     });
                 }
                 None if direction == Direction::Forward
-                    && region.palette().len() == addition.index.get() as usize
-                    && region.palette().index_of(&addition.state).is_none() => {}
+                    && *next_idx == addition.index.get() as usize
+                    && region.palette().index_of(&addition.state).is_none() =>
+                {
+                    *next_idx += 1;
+                }
                 None => {
                     return Err(PatchError::PaletteConflict {
                         region_id: addition.region_id.clone(),

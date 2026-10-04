@@ -5,7 +5,10 @@ use schematic_core::{
     BlockPosition, BlockProperty, BlockState, OperationTarget, PaletteIndex, Position, RegionId,
     Selection,
 };
-use schematic_edit::{EditWorkspace, IslandCleanupRequest, ReplaceCommand};
+use schematic_edit::{
+    Clipboard, EditWorkspace, FillCommand, IslandCleanupRequest, MirrorAxis, MirrorCommand,
+    MoveCommand, PasteCommand, ReplaceCommand, RotateCommand, RotationAngle,
+};
 use schematic_format::{LitematicDocument, NbtTag};
 use schematic_validate::validate_document as core_validate_document;
 pub use schematic_validate::{Diagnostic, DiagnosticSeverity, Fixability};
@@ -68,6 +71,46 @@ pub struct ReplaceRequest {
 pub struct SelectionBounds {
     pub min: [i32; 3],
     pub max: [i32; 3],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FillRequest {
+    pub region_id: String,
+    pub selection: SelectionBounds,
+    pub block: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CopyRequest {
+    pub region_id: String,
+    pub selection: SelectionBounds,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PasteRequest {
+    pub region_id: String,
+    pub target: [i32; 3],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MoveRequest {
+    pub region_id: String,
+    pub selection: SelectionBounds,
+    pub delta: [i32; 3],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RotateRequest {
+    pub region_id: String,
+    pub selection: SelectionBounds,
+    pub angle_deg: i32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MirrorRequest {
+    pub region_id: String,
+    pub selection: SelectionBounds,
+    pub axis: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,6 +187,7 @@ pub struct RegionInspectionSummary {
 pub struct Session {
     litematic: Option<LitematicDocument>,
     workspace: Option<EditWorkspace>,
+    clipboard: Option<Clipboard>,
     response_buffer: Vec<u8>,
 }
 
@@ -158,6 +202,7 @@ impl Session {
         Self {
             litematic: None,
             workspace: None,
+            clipboard: None,
             response_buffer: Vec::new(),
         }
     }
@@ -374,6 +419,232 @@ impl Session {
             message: format!(
                 "Replaced {} block(s) from '{}' to '{}'",
                 changed_count, req.from_block, req.to_block
+            ),
+        })
+    }
+
+    pub fn preview_fill(&mut self, req: FillRequest) -> Result<PreviewSummary, String> {
+        let ws = self.workspace.as_mut().ok_or("No document loaded")?;
+        let reg_id = RegionId::new(&req.region_id);
+        let _ = ws
+            .committed()
+            .region(&reg_id)
+            .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
+
+        let selection = Selection::from_corners(
+            Position::new(
+                req.selection.min[0],
+                req.selection.min[1],
+                req.selection.min[2],
+            ),
+            Position::new(
+                req.selection.max[0],
+                req.selection.max[1],
+                req.selection.max[2],
+            ),
+        );
+
+        let state = parse_block_state(&req.block)?;
+        let cmd = FillCommand::new(reg_id, selection, state);
+        ws.preview_command(&cmd).map_err(|e| e.to_string())?;
+
+        let changed_count = ws
+            .pending_preview()
+            .map(|p| p.changed_block_count())
+            .unwrap_or(0);
+
+        Ok(PreviewSummary {
+            changed_count,
+            can_commit: changed_count > 0,
+            message: format!("Filled {} block(s) with '{}'", changed_count, req.block),
+        })
+    }
+
+    pub fn copy_selection(&mut self, req: CopyRequest) -> Result<usize, String> {
+        let ws = self.workspace.as_mut().ok_or("No document loaded")?;
+        let reg_id = RegionId::new(&req.region_id);
+        let region = ws
+            .committed()
+            .region(&reg_id)
+            .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
+
+        let selection = Selection::from_corners(
+            Position::new(
+                req.selection.min[0],
+                req.selection.min[1],
+                req.selection.min[2],
+            ),
+            Position::new(
+                req.selection.max[0],
+                req.selection.max[1],
+                req.selection.max[2],
+            ),
+        );
+
+        let clipboard =
+            Clipboard::from_region_selection(region, &selection).map_err(|e| e.to_string())?;
+        let count = clipboard.blocks.len();
+        self.clipboard = Some(clipboard);
+        Ok(count)
+    }
+
+    pub fn preview_paste(&mut self, req: PasteRequest) -> Result<PreviewSummary, String> {
+        let clipboard = self.clipboard.clone().ok_or("Clipboard is empty")?;
+        let ws = self.workspace.as_mut().ok_or("No document loaded")?;
+        let reg_id = RegionId::new(&req.region_id);
+        let _ = ws
+            .committed()
+            .region(&reg_id)
+            .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
+
+        let target_pos = Position::new(req.target[0], req.target[1], req.target[2]);
+        let cmd = PasteCommand::new(reg_id, target_pos, clipboard);
+        ws.preview_command(&cmd).map_err(|e| e.to_string())?;
+
+        let changed_count = ws
+            .pending_preview()
+            .map(|p| p.changed_block_count())
+            .unwrap_or(0);
+
+        Ok(PreviewSummary {
+            changed_count,
+            can_commit: changed_count > 0,
+            message: format!("Pasted {} block(s)", changed_count),
+        })
+    }
+
+    pub fn preview_move(&mut self, req: MoveRequest) -> Result<PreviewSummary, String> {
+        let ws = self.workspace.as_mut().ok_or("No document loaded")?;
+        let reg_id = RegionId::new(&req.region_id);
+        let _ = ws
+            .committed()
+            .region(&reg_id)
+            .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
+
+        let selection = Selection::from_corners(
+            Position::new(
+                req.selection.min[0],
+                req.selection.min[1],
+                req.selection.min[2],
+            ),
+            Position::new(
+                req.selection.max[0],
+                req.selection.max[1],
+                req.selection.max[2],
+            ),
+        );
+
+        let cmd = MoveCommand::new(reg_id, selection, req.delta);
+        ws.preview_command(&cmd).map_err(|e| e.to_string())?;
+
+        let changed_count = ws
+            .pending_preview()
+            .map(|p| p.changed_block_count())
+            .unwrap_or(0);
+
+        Ok(PreviewSummary {
+            changed_count,
+            can_commit: changed_count > 0,
+            message: format!(
+                "Moved {} block(s) by [{}, {}, {}]",
+                changed_count, req.delta[0], req.delta[1], req.delta[2]
+            ),
+        })
+    }
+
+    pub fn preview_rotate(&mut self, req: RotateRequest) -> Result<PreviewSummary, String> {
+        let ws = self.workspace.as_mut().ok_or("No document loaded")?;
+        let reg_id = RegionId::new(&req.region_id);
+        let _ = ws
+            .committed()
+            .region(&reg_id)
+            .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
+
+        let selection = Selection::from_corners(
+            Position::new(
+                req.selection.min[0],
+                req.selection.min[1],
+                req.selection.min[2],
+            ),
+            Position::new(
+                req.selection.max[0],
+                req.selection.max[1],
+                req.selection.max[2],
+            ),
+        );
+
+        let angle = match req.angle_deg {
+            90 => RotationAngle::Deg90,
+            180 => RotationAngle::Deg180,
+            270 => RotationAngle::Deg270,
+            other => {
+                return Err(format!(
+                    "Unsupported rotation angle: {other} (must be 90, 180, or 270)"
+                ))
+            }
+        };
+
+        let cmd = RotateCommand::new(reg_id, selection, angle);
+        ws.preview_command(&cmd).map_err(|e| e.to_string())?;
+
+        let changed_count = ws
+            .pending_preview()
+            .map(|p| p.changed_block_count())
+            .unwrap_or(0);
+
+        Ok(PreviewSummary {
+            changed_count,
+            can_commit: changed_count > 0,
+            message: format!("Rotated {} block(s) by {}°", changed_count, req.angle_deg),
+        })
+    }
+
+    pub fn preview_mirror(&mut self, req: MirrorRequest) -> Result<PreviewSummary, String> {
+        let ws = self.workspace.as_mut().ok_or("No document loaded")?;
+        let reg_id = RegionId::new(&req.region_id);
+        let _ = ws
+            .committed()
+            .region(&reg_id)
+            .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
+
+        let selection = Selection::from_corners(
+            Position::new(
+                req.selection.min[0],
+                req.selection.min[1],
+                req.selection.min[2],
+            ),
+            Position::new(
+                req.selection.max[0],
+                req.selection.max[1],
+                req.selection.max[2],
+            ),
+        );
+
+        let axis = match req.axis.to_ascii_lowercase().as_str() {
+            "x" => MirrorAxis::X,
+            "z" => MirrorAxis::Z,
+            other => {
+                return Err(format!(
+                    "Unsupported mirror axis: {other} (must be 'x' or 'z')"
+                ))
+            }
+        };
+
+        let cmd = MirrorCommand::new(reg_id, selection, axis);
+        ws.preview_command(&cmd).map_err(|e| e.to_string())?;
+
+        let changed_count = ws
+            .pending_preview()
+            .map(|p| p.changed_block_count())
+            .unwrap_or(0);
+
+        Ok(PreviewSummary {
+            changed_count,
+            can_commit: changed_count > 0,
+            message: format!(
+                "Mirrored {} block(s) along {}-axis",
+                changed_count,
+                req.axis.to_uppercase()
             ),
         })
     }

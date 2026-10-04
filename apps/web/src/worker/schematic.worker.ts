@@ -3,6 +3,12 @@ import {
   ReplaceRequest,
   CleanupRequest,
   BlockInspectionRequest,
+  FillRequest,
+  CopyRequest,
+  PasteRequest,
+  MoveRequest,
+  RotateRequest,
+  MirrorRequest,
 } from '../engine/schematicEngine';
 
 const engine = new SchematicEngine();
@@ -13,6 +19,12 @@ export type WorkerMessage =
   | { id: string; type: 'LOAD_LITEMATIC'; buffer: ArrayBuffer }
   | { id: string; type: 'GET_REGION_MESH'; regionId: string }
   | { id: string; type: 'PREVIEW_REPLACE'; req: ReplaceRequest }
+  | { id: string; type: 'PREVIEW_FILL'; req: FillRequest }
+  | { id: string; type: 'COPY_SELECTION'; req: CopyRequest }
+  | { id: string; type: 'PREVIEW_PASTE'; req: PasteRequest }
+  | { id: string; type: 'PREVIEW_MOVE'; req: MoveRequest }
+  | { id: string; type: 'PREVIEW_ROTATE'; req: RotateRequest }
+  | { id: string; type: 'PREVIEW_MIRROR'; req: MirrorRequest }
   | { id: string; type: 'PREVIEW_CLEANUP'; req: CleanupRequest }
   | { id: string; type: 'COMMIT_PREVIEW' }
   | { id: string; type: 'CANCEL_PREVIEW' }
@@ -59,6 +71,36 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       }
       case 'PREVIEW_REPLACE': {
         const res = engine.previewReplace(msg.req);
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'PREVIEW_FILL': {
+        const res = engine.previewFill(msg.req);
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'COPY_SELECTION': {
+        const count = engine.copySelection(msg.req);
+        self.postMessage({ id: msg.id, ok: true, data: count });
+        break;
+      }
+      case 'PREVIEW_PASTE': {
+        const res = engine.previewPaste(msg.req);
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'PREVIEW_MOVE': {
+        const res = engine.previewMove(msg.req);
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'PREVIEW_ROTATE': {
+        const res = engine.previewRotate(msg.req);
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'PREVIEW_MIRROR': {
+        const res = engine.previewMirror(msg.req);
         self.postMessage({ id: msg.id, ok: true, data: res });
         break;
       }

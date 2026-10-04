@@ -2,6 +2,12 @@ import {
   DocumentSummary,
   RegionMeshData,
   ReplaceRequest,
+  FillRequest,
+  CopyRequest,
+  PasteRequest,
+  MoveRequest,
+  RotateRequest,
+  MirrorRequest,
   CleanupRequest,
   PreviewSummary,
   HistorySummary,
@@ -76,6 +82,30 @@ export class SchematicWorkerClient {
 
   async previewReplace(req: ReplaceRequest): Promise<PreviewSummary> {
     return this.send({ type: 'PREVIEW_REPLACE', req });
+  }
+
+  async previewFill(req: FillRequest): Promise<PreviewSummary> {
+    return this.send({ type: 'PREVIEW_FILL', req });
+  }
+
+  async copySelection(req: CopyRequest): Promise<number> {
+    return this.send({ type: 'COPY_SELECTION', req });
+  }
+
+  async previewPaste(req: PasteRequest): Promise<PreviewSummary> {
+    return this.send({ type: 'PREVIEW_PASTE', req });
+  }
+
+  async previewMove(req: MoveRequest): Promise<PreviewSummary> {
+    return this.send({ type: 'PREVIEW_MOVE', req });
+  }
+
+  async previewRotate(req: RotateRequest): Promise<PreviewSummary> {
+    return this.send({ type: 'PREVIEW_ROTATE', req });
+  }
+
+  async previewMirror(req: MirrorRequest): Promise<PreviewSummary> {
+    return this.send({ type: 'PREVIEW_MIRROR', req });
   }
 
   async previewCleanup(req: CleanupRequest): Promise<PreviewSummary> {

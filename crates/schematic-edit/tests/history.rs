@@ -225,7 +225,11 @@ fn successful_new_edit_clears_redo_history() {
     history
         .execute(
             &mut document,
-            &FillCommand::new(RegionId::new("main"), area, block_state("minecraft:stone")),
+            &FillCommand::new(
+                RegionId::new("main"),
+                area.clone(),
+                block_state("minecraft:stone"),
+            ),
         )
         .unwrap();
     assert!(history.undo(&mut document).unwrap());

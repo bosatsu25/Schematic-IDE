@@ -99,7 +99,7 @@ impl Size {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Bounds {
     min: Position,
     max_exclusive: [i64; 3],
@@ -127,6 +127,47 @@ impl Bounds {
         self.max_exclusive[0] <= self.min.x as i64
             || self.max_exclusive[1] <= self.min.y as i64
             || self.max_exclusive[2] <= self.min.z as i64
+    }
+
+    pub fn size(self) -> Size {
+        if self.is_empty() {
+            Size::new(0, 0, 0)
+        } else {
+            Size::new(
+                (self.max_exclusive[0] - self.min.x as i64) as u32,
+                (self.max_exclusive[1] - self.min.y as i64) as u32,
+                (self.max_exclusive[2] - self.min.z as i64) as u32,
+            )
+        }
+    }
+
+    pub fn from_inclusive(first: Position, second: Position) -> Self {
+        let min = Position::new(
+            first.x.min(second.x),
+            first.y.min(second.y),
+            first.z.min(second.z),
+        );
+        let max_exclusive = [
+            first.x.max(second.x) as i64 + 1,
+            first.y.max(second.y) as i64 + 1,
+            first.z.max(second.z) as i64 + 1,
+        ];
+        Self { min, max_exclusive }
+    }
+
+    pub fn between(first: Position, second: Position) -> Option<Self> {
+        let min = Position::new(
+            first.x.min(second.x),
+            first.y.min(second.y),
+            first.z.min(second.z),
+        );
+        let max_exclusive = [
+            first.x.max(second.x) as i64,
+            first.y.max(second.y) as i64,
+            first.z.max(second.z) as i64,
+        ];
+        let bounds = Self::new(min, max_exclusive);
+        (!bounds.is_empty()).then_some(bounds)
     }
 
     pub fn contains(self, position: Position) -> bool {

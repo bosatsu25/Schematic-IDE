@@ -3,6 +3,7 @@ use schematic_core::{
     BlockPosition, BlockState, Document, PaletteError, PaletteIndex, Position, Region, RegionId,
     Selection,
 };
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -31,7 +32,7 @@ impl EditCommand for FillCommand {
     fn create_patch(&self, document: &Document) -> Result<PatchSet, EditError> {
         let region = get_region(document, &self.region_id)?;
         let mut changes = Vec::new();
-        visit_selected_blocks(region, self.selection, |local_position, old_index| {
+        visit_selected_blocks_dense(region, &self.selection, |local_position, old_index| {
             let current_state = old_index.and_then(|index| region.palette().get(index));
             if current_state == Some(&self.state) {
                 return Ok(());
@@ -86,10 +87,7 @@ impl EditCommand for ReplaceCommand {
         }
         let region = get_region(document, &self.region_id)?;
         let mut changes = Vec::new();
-        visit_selected_blocks(region, self.selection, |local_position, old_index| {
-            let Some(old_index) = old_index else {
-                return Ok(());
-            };
+        visit_occupied_selected_blocks(region, &self.selection, |local_position, old_index| {
             if region.palette().get(old_index) == Some(&self.from) {
                 changes.push((local_position, old_index));
             }
@@ -130,10 +128,8 @@ impl EditCommand for DeleteCommand {
     fn create_patch(&self, document: &Document) -> Result<PatchSet, EditError> {
         let region = get_region(document, &self.region_id)?;
         let mut changes = Vec::new();
-        visit_selected_blocks(region, self.selection, |position, before| {
-            if let Some(index) = before {
-                changes.push(BlockChange::new(position, Some(index), None));
-            }
+        visit_occupied_selected_blocks(region, &self.selection, |position, before| {
+            changes.push(BlockChange::new(position, Some(before), None));
             Ok(())
         })?;
         Ok(PatchSet::from_changes(
@@ -150,32 +146,68 @@ fn get_region<'a>(document: &'a Document, id: &RegionId) -> Result<&'a Region, E
         .ok_or_else(|| EditError::MissingRegion(id.clone()))
 }
 
-fn visit_selected_blocks(
+fn visit_occupied_selected_blocks(
     region: &Region,
-    selection: Selection,
+    selection: &Selection,
+    mut visit: impl FnMut(BlockPosition, PaletteIndex) -> Result<(), EditError>,
+) -> Result<(), EditError> {
+    if selection.is_empty() || region.is_empty() {
+        return Ok(());
+    }
+    for (chunk_pos, chunk) in region.chunks() {
+        if chunk.is_empty() {
+            continue;
+        }
+        for (index, palette_index) in chunk.occupied_blocks() {
+            let Some(local_pos) = chunk_pos.block_position_for_index(index) else {
+                continue;
+            };
+            let Some(world_pos) = region.local_to_world(local_pos) else {
+                continue;
+            };
+            if selection.contains(world_pos) {
+                visit(local_pos, palette_index)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn visit_selected_blocks_dense(
+    region: &Region,
+    selection: &Selection,
     mut visit: impl FnMut(BlockPosition, Option<PaletteIndex>) -> Result<(), EditError>,
 ) -> Result<(), EditError> {
-    let Some(bounds) = region.bounds().intersection(selection.bounds()) else {
+    if selection.is_empty() || region.is_empty() {
         return Ok(());
-    };
-    let min = bounds.min();
-    let max = bounds.max_exclusive();
+    }
+    let mut visited = HashSet::new();
+    for box_item in selection.boxes() {
+        let Some(bounds) = region.bounds().intersection(box_item.bounds()) else {
+            continue;
+        };
+        let min = bounds.min();
+        let max = bounds.max_exclusive();
 
-    for y in min.y as i64..max[1] {
-        for z in min.z as i64..max[2] {
-            for x in min.x as i64..max[0] {
-                let world = Position::new(
-                    i32::try_from(x).map_err(|_| EditError::InvalidCoordinate)?,
-                    i32::try_from(y).map_err(|_| EditError::InvalidCoordinate)?,
-                    i32::try_from(z).map_err(|_| EditError::InvalidCoordinate)?,
-                );
-                let local = region
-                    .world_to_local(world)
-                    .ok_or(EditError::InvalidCoordinate)?;
-                let index = region
-                    .block_index_at(local)
-                    .map_err(EditError::RegionBlock)?;
-                visit(local, index)?;
+        for y in min.y as i64..max[1] {
+            for z in min.z as i64..max[2] {
+                for x in min.x as i64..max[0] {
+                    let world = Position::new(
+                        i32::try_from(x).map_err(|_| EditError::InvalidCoordinate)?,
+                        i32::try_from(y).map_err(|_| EditError::InvalidCoordinate)?,
+                        i32::try_from(z).map_err(|_| EditError::InvalidCoordinate)?,
+                    );
+                    if !visited.insert(world) {
+                        continue;
+                    }
+                    let local = region
+                        .world_to_local(world)
+                        .ok_or(EditError::InvalidCoordinate)?;
+                    let index = region
+                        .block_index_at(local)
+                        .map_err(EditError::RegionBlock)?;
+                    visit(local, index)?;
+                }
             }
         }
     }

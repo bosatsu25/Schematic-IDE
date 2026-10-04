@@ -14,6 +14,7 @@ import {
 import { SchematicWorkerClient } from '../worker/workerClient';
 
 export type SidebarTab = 'regions' | 'inspector' | 'problems' | 'diff';
+export type ExportFormat = 'litematic' | 'sponge' | 'structure';
 
 export interface EditorState {
   client: SchematicWorkerClient;
@@ -26,6 +27,7 @@ export interface EditorState {
   error: string | null;
   loading: boolean;
   exportedBlob: Blob | null;
+  exportFormat: ExportFormat;
   activeTab: SidebarTab;
   inspection: BlockInspection | null;
   docInspection: DocumentInspection | null;
@@ -66,7 +68,8 @@ export interface EditorState {
   cancelPreview: () => Promise<void>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
-  exportFile: (defaultFilename?: string) => Promise<Uint8Array | null>;
+  setExportFormat: (format: ExportFormat) => void;
+  exportFile: (defaultFilename?: string, format?: ExportFormat) => Promise<Uint8Array | null>;
 }
 
 export const useSchematicStore = create<EditorState>((set, get) => {
@@ -89,6 +92,7 @@ export const useSchematicStore = create<EditorState>((set, get) => {
     error: null,
     loading: false,
     exportedBlob: null,
+    exportFormat: 'litematic',
     activeTab: 'regions',
     inspection: null,
     docInspection: null,
@@ -104,6 +108,10 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       } catch (err: unknown) {
         console.error('Failed to initialize worker:', err);
       }
+    },
+
+    setExportFormat: (format: ExportFormat) => {
+      set({ exportFormat: format });
     },
 
     setActiveTab: (tab: SidebarTab) => {
@@ -642,10 +650,23 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       }
     },
 
-    exportFile: async (defaultFilename?: string) => {
+    exportFile: async (defaultFilename?: string, format?: ExportFormat) => {
+      const activeFormat = format || get().exportFormat || 'litematic';
       set({ loading: true, error: null });
       try {
-        const bytes = await client.exportLitematic();
+        let bytes: Uint8Array;
+        let ext = '.litematic';
+        if (activeFormat === 'sponge') {
+          bytes = await client.exportSponge();
+          ext = '.schem';
+        } else if (activeFormat === 'structure') {
+          bytes = await client.exportStructure();
+          ext = '.nbt';
+        } else {
+          bytes = await client.exportLitematic();
+          ext = '.litematic';
+        }
+
         const blob = new Blob([bytes.buffer as ArrayBuffer], {
           type: 'application/octet-stream',
         });
@@ -653,7 +674,7 @@ export const useSchematicStore = create<EditorState>((set, get) => {
 
         if (typeof window !== 'undefined' && window.document) {
           const docName = get().document?.name || 'schematic';
-          const filename = defaultFilename || `${docName}-edited.litematic`;
+          const filename = defaultFilename || `${docName}-edited${ext}`;
           const url = URL.createObjectURL(blob);
           const a = window.document.createElement('a');
           a.href = url;

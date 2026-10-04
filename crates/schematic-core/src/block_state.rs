@@ -78,6 +78,54 @@ pub enum BlockStateError {
     DuplicateProperty(String),
 }
 
+impl Display for BlockState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.properties.is_empty() {
+            write!(f, "{}", self.id)
+        } else {
+            let mut props: Vec<String> = self
+                .properties
+                .values()
+                .map(|p| format!("{}={}", p.name(), p.value()))
+                .collect();
+            props.sort();
+            write!(f, "{}[{}]", self.id, props.join(","))
+        }
+    }
+}
+
+impl std::str::FromStr for BlockState {
+    type Err = BlockStateError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if let Some(open) = s.find('[') {
+            if !s.ends_with(']') {
+                return Err(BlockStateError::EmptyPropertyName);
+            }
+            let id = &s[..open];
+            let inside = &s[open + 1..s.len() - 1];
+            let mut props = Vec::new();
+            for pair in inside.split(',') {
+                let pair = pair.trim();
+                if pair.is_empty() {
+                    continue;
+                }
+                let mut parts = pair.splitn(2, '=');
+                let name = parts.next().unwrap_or("").trim();
+                let val = parts.next().unwrap_or("").trim();
+                if name.is_empty() {
+                    return Err(BlockStateError::EmptyPropertyName);
+                }
+                props.push(BlockProperty::new(name, val));
+            }
+            BlockState::new(id, props)
+        } else {
+            BlockState::new(s, [])
+        }
+    }
+}
+
 impl Display for BlockStateError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

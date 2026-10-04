@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { useSchematicStore } from '../store/schematicStore';
+import { useSchematicStore, ExportFormat } from '../store/schematicStore';
 
 export const Header: React.FC = () => {
   const {
@@ -10,6 +10,8 @@ export const Header: React.FC = () => {
     exportFile,
     loadFile,
     loading,
+    exportFormat,
+    setExportFormat,
   } = useSchematicStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -17,6 +19,17 @@ export const Header: React.FC = () => {
     const file = e.target.files?.[0];
     if (file) {
       loadFile(file);
+    }
+  };
+
+  const getExportLabel = () => {
+    switch (exportFormat) {
+      case 'sponge':
+        return 'Export .schem';
+      case 'structure':
+        return 'Export .nbt';
+      default:
+        return 'Export .litematic';
     }
   };
 
@@ -36,7 +49,7 @@ export const Header: React.FC = () => {
       <div className="header-actions">
         <input
           type="file"
-          accept=".litematic"
+          accept=".litematic,.schem,.nbt"
           ref={fileInputRef}
           style={{ display: 'none' }}
           data-testid="open-file-input"
@@ -48,7 +61,7 @@ export const Header: React.FC = () => {
           onClick={() => fileInputRef.current?.click()}
           disabled={loading}
         >
-          Open .litematic
+          Open Schematic
         </button>
 
         <button
@@ -71,13 +84,32 @@ export const Header: React.FC = () => {
           Redo
         </button>
 
+        <select
+          className="select-input"
+          data-testid="export-format-select"
+          value={exportFormat}
+          onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
+          disabled={!document || loading}
+          style={{
+            padding: '6px 8px',
+            borderRadius: '4px',
+            background: 'var(--bg-tertiary, #2a2a2a)',
+            color: 'var(--text-main, #fff)',
+            border: '1px solid var(--border-color, #444)',
+          }}
+        >
+          <option value="litematic">Litematic (.litematic)</option>
+          <option value="sponge">Sponge (.schem)</option>
+          <option value="structure">Structure (.nbt)</option>
+        </select>
+
         <button
           className="btn btn-success"
           data-testid="export-btn"
           onClick={() => exportFile()}
           disabled={!document || loading}
         >
-          Export .litematic
+          {getExportLabel()}
         </button>
       </div>
     </header>

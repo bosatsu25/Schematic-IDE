@@ -63,6 +63,24 @@ impl EditWorkspace {
         Ok(())
     }
 
+    pub fn preview_island_cleanup(
+        &mut self,
+        region_id: &RegionId,
+        surface: &schematic_analysis::SurfaceAnalysis,
+        features: &schematic_analysis::SurfaceFeatureAnalysis,
+        request: &crate::cleanup::IslandCleanupRequest,
+    ) -> Result<&PatchSet, crate::cleanup::CleanupError> {
+        let patch = crate::cleanup::DisconnectedIslandCleanupPlanner::plan(
+            &self.committed,
+            region_id,
+            surface,
+            features,
+            request,
+        )?;
+        self.preview_patch(patch);
+        Ok(self.pending_preview.as_ref().unwrap())
+    }
+
     pub fn cancel_preview(&mut self) {
         self.pending_preview = None;
     }

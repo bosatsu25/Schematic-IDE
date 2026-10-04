@@ -28,6 +28,7 @@ export interface EditorState {
   inspection: BlockInspection | null;
   docInspection: DocumentInspection | null;
   diagnostics: Diagnostic[];
+  clipboardCount: number | null;
 
   init: () => Promise<void>;
   loadFile: (file: File) => Promise<void>;
@@ -41,6 +42,12 @@ export interface EditorState {
   validateDocument: () => Promise<void>;
   selectDiagnosticPosition: (diag: Diagnostic) => Promise<void>;
   previewReplace: (fromBlock: string, toBlock: string) => Promise<void>;
+  previewFill: (block: string) => Promise<void>;
+  copySelection: () => Promise<number | null>;
+  previewPaste: (target: [number, number, number]) => Promise<void>;
+  previewMove: (delta: [number, number, number]) => Promise<void>;
+  previewRotate: (angleDeg: number) => Promise<void>;
+  previewMirror: (axis: 'x' | 'z' | string) => Promise<void>;
   previewCleanup: (
     maxSize: number,
     replacement: string,
@@ -77,6 +84,7 @@ export const useSchematicStore = create<EditorState>((set, get) => {
     inspection: null,
     docInspection: null,
     diagnostics: [],
+    clipboardCount: null,
 
     init: async () => {
       try {
@@ -239,6 +247,201 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           previewSummary: prev,
           status,
           meshData,
+          loading: false,
+        });
+      } catch (err: unknown) {
+        set({
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+      }
+    },
+
+    previewFill: async (block: string) => {
+      const { selectedRegionId, selection, meshData } = get();
+      if (!selectedRegionId || !meshData) return;
+      const sel = selection || {
+        min: meshData.origin,
+        max: [
+          meshData.origin[0] + (meshData.size[0] > 0 ? meshData.size[0] - 1 : 0),
+          meshData.origin[1] + (meshData.size[1] > 0 ? meshData.size[1] - 1 : 0),
+          meshData.origin[2] + (meshData.size[2] > 0 ? meshData.size[2] - 1 : 0),
+        ],
+      };
+
+      set({ loading: true, error: null });
+      try {
+        const prev = await client.previewFill({
+          region_id: selectedRegionId,
+          selection: sel,
+          block,
+        });
+        const status = await client.getStatus();
+        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        set({
+          previewSummary: prev,
+          status,
+          meshData: newMeshData,
+          loading: false,
+        });
+      } catch (err: unknown) {
+        set({
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+      }
+    },
+
+    copySelection: async () => {
+      const { selectedRegionId, selection, meshData } = get();
+      if (!selectedRegionId || !meshData) return null;
+      const sel = selection || {
+        min: meshData.origin,
+        max: [
+          meshData.origin[0] + (meshData.size[0] > 0 ? meshData.size[0] - 1 : 0),
+          meshData.origin[1] + (meshData.size[1] > 0 ? meshData.size[1] - 1 : 0),
+          meshData.origin[2] + (meshData.size[2] > 0 ? meshData.size[2] - 1 : 0),
+        ],
+      };
+
+      set({ loading: true, error: null });
+      try {
+        const count = await client.copySelection({
+          region_id: selectedRegionId,
+          selection: sel,
+        });
+        set({ clipboardCount: count, loading: false });
+        return count;
+      } catch (err: unknown) {
+        set({
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+        return null;
+      }
+    },
+
+    previewPaste: async (target: [number, number, number]) => {
+      const { selectedRegionId } = get();
+      if (!selectedRegionId) return;
+
+      set({ loading: true, error: null });
+      try {
+        const prev = await client.previewPaste({
+          region_id: selectedRegionId,
+          target,
+        });
+        const status = await client.getStatus();
+        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        set({
+          previewSummary: prev,
+          status,
+          meshData: newMeshData,
+          loading: false,
+        });
+      } catch (err: unknown) {
+        set({
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+      }
+    },
+
+    previewMove: async (delta: [number, number, number]) => {
+      const { selectedRegionId, selection, meshData } = get();
+      if (!selectedRegionId || !meshData) return;
+      const sel = selection || {
+        min: meshData.origin,
+        max: [
+          meshData.origin[0] + (meshData.size[0] > 0 ? meshData.size[0] - 1 : 0),
+          meshData.origin[1] + (meshData.size[1] > 0 ? meshData.size[1] - 1 : 0),
+          meshData.origin[2] + (meshData.size[2] > 0 ? meshData.size[2] - 1 : 0),
+        ],
+      };
+
+      set({ loading: true, error: null });
+      try {
+        const prev = await client.previewMove({
+          region_id: selectedRegionId,
+          selection: sel,
+          delta,
+        });
+        const status = await client.getStatus();
+        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        set({
+          previewSummary: prev,
+          status,
+          meshData: newMeshData,
+          loading: false,
+        });
+      } catch (err: unknown) {
+        set({
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+      }
+    },
+
+    previewRotate: async (angleDeg: number) => {
+      const { selectedRegionId, selection, meshData } = get();
+      if (!selectedRegionId || !meshData) return;
+      const sel = selection || {
+        min: meshData.origin,
+        max: [
+          meshData.origin[0] + (meshData.size[0] > 0 ? meshData.size[0] - 1 : 0),
+          meshData.origin[1] + (meshData.size[1] > 0 ? meshData.size[1] - 1 : 0),
+          meshData.origin[2] + (meshData.size[2] > 0 ? meshData.size[2] - 1 : 0),
+        ],
+      };
+
+      set({ loading: true, error: null });
+      try {
+        const prev = await client.previewRotate({
+          region_id: selectedRegionId,
+          selection: sel,
+          angle_deg: angleDeg,
+        });
+        const status = await client.getStatus();
+        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        set({
+          previewSummary: prev,
+          status,
+          meshData: newMeshData,
+          loading: false,
+        });
+      } catch (err: unknown) {
+        set({
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+      }
+    },
+
+    previewMirror: async (axis: 'x' | 'z' | string) => {
+      const { selectedRegionId, selection, meshData } = get();
+      if (!selectedRegionId || !meshData) return;
+      const sel = selection || {
+        min: meshData.origin,
+        max: [
+          meshData.origin[0] + (meshData.size[0] > 0 ? meshData.size[0] - 1 : 0),
+          meshData.origin[1] + (meshData.size[1] > 0 ? meshData.size[1] - 1 : 0),
+          meshData.origin[2] + (meshData.size[2] > 0 ? meshData.size[2] - 1 : 0),
+        ],
+      };
+
+      set({ loading: true, error: null });
+      try {
+        const prev = await client.previewMirror({
+          region_id: selectedRegionId,
+          selection: sel,
+          axis,
+        });
+        const status = await client.getStatus();
+        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        set({
+          previewSummary: prev,
+          status,
+          meshData: newMeshData,
           loading: false,
         });
       } catch (err: unknown) {

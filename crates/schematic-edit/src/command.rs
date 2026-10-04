@@ -1,9 +1,11 @@
+use crate::clipboard::Clipboard;
+use crate::transform::{MirrorAxis, RotationAngle};
 use crate::{BlockChange, PatchSet};
 use schematic_core::{
     BlockPosition, BlockState, Document, PaletteError, PaletteIndex, Position, Region, RegionId,
     Selection,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -140,13 +142,277 @@ impl EditCommand for DeleteCommand {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct PasteCommand {
+    region_id: RegionId,
+    target_pos: Position,
+    clipboard: Clipboard,
+}
+
+impl PasteCommand {
+    pub fn new(region_id: RegionId, target_pos: Position, clipboard: Clipboard) -> Self {
+        Self {
+            region_id,
+            target_pos,
+            clipboard,
+        }
+    }
+}
+
+impl EditCommand for PasteCommand {
+    fn create_patch(&self, document: &Document) -> Result<PatchSet, EditError> {
+        let region = get_region(document, &self.region_id)?;
+        if self.clipboard.is_empty() {
+            return Ok(PatchSet::empty());
+        }
+
+        let mut blocks_to_set = Vec::new();
+        for block in &self.clipboard.blocks {
+            let world_pos = Position::new(
+                self.target_pos.x + block.offset[0],
+                self.target_pos.y + block.offset[1],
+                self.target_pos.z + block.offset[2],
+            );
+            if let Some(local_pos) = region.world_to_local(world_pos) {
+                blocks_to_set.push((local_pos, block.state.clone()));
+            }
+        }
+
+        apply_block_updates(&self.region_id, region, Vec::new(), blocks_to_set)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MoveCommand {
+    region_id: RegionId,
+    selection: Selection,
+    delta: [i32; 3],
+}
+
+impl MoveCommand {
+    pub fn new(region_id: RegionId, selection: Selection, delta: [i32; 3]) -> Self {
+        Self {
+            region_id,
+            selection,
+            delta,
+        }
+    }
+}
+
+impl EditCommand for MoveCommand {
+    fn create_patch(&self, document: &Document) -> Result<PatchSet, EditError> {
+        if self.selection.is_empty()
+            || (self.delta[0] == 0 && self.delta[1] == 0 && self.delta[2] == 0)
+        {
+            return Ok(PatchSet::empty());
+        }
+        let region = get_region(document, &self.region_id)?;
+        let clipboard = Clipboard::from_region_selection(region, &self.selection)?;
+        if clipboard.is_empty() {
+            return Ok(PatchSet::empty());
+        }
+
+        let min = self.selection.bounds().min();
+
+        let mut blocks_to_clear = Vec::new();
+        visit_occupied_selected_blocks(region, &self.selection, |pos, _| {
+            blocks_to_clear.push(pos);
+            Ok(())
+        })?;
+
+        let mut blocks_to_set = Vec::new();
+        for block in &clipboard.blocks {
+            let world_pos = Position::new(
+                min.x + block.offset[0] + self.delta[0],
+                min.y + block.offset[1] + self.delta[1],
+                min.z + block.offset[2] + self.delta[2],
+            );
+            if let Some(local_pos) = region.world_to_local(world_pos) {
+                blocks_to_set.push((local_pos, block.state.clone()));
+            }
+        }
+
+        apply_block_updates(&self.region_id, region, blocks_to_clear, blocks_to_set)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RotateCommand {
+    region_id: RegionId,
+    selection: Selection,
+    angle: RotationAngle,
+}
+
+impl RotateCommand {
+    pub fn new(region_id: RegionId, selection: Selection, angle: RotationAngle) -> Self {
+        Self {
+            region_id,
+            selection,
+            angle,
+        }
+    }
+}
+
+impl EditCommand for RotateCommand {
+    fn create_patch(&self, document: &Document) -> Result<PatchSet, EditError> {
+        if self.selection.is_empty() {
+            return Ok(PatchSet::empty());
+        }
+        let region = get_region(document, &self.region_id)?;
+        let clipboard = Clipboard::from_region_selection(region, &self.selection)?;
+        if clipboard.is_empty() {
+            return Ok(PatchSet::empty());
+        }
+
+        let min = self.selection.bounds().min();
+
+        let rotated = clipboard.rotated(self.angle);
+
+        let mut blocks_to_clear = Vec::new();
+        visit_occupied_selected_blocks(region, &self.selection, |pos, _| {
+            blocks_to_clear.push(pos);
+            Ok(())
+        })?;
+
+        let mut blocks_to_set = Vec::new();
+        for block in &rotated.blocks {
+            let world_pos = Position::new(
+                min.x + block.offset[0],
+                min.y + block.offset[1],
+                min.z + block.offset[2],
+            );
+            if let Some(local_pos) = region.world_to_local(world_pos) {
+                blocks_to_set.push((local_pos, block.state.clone()));
+            }
+        }
+
+        apply_block_updates(&self.region_id, region, blocks_to_clear, blocks_to_set)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MirrorCommand {
+    region_id: RegionId,
+    selection: Selection,
+    axis: MirrorAxis,
+}
+
+impl MirrorCommand {
+    pub fn new(region_id: RegionId, selection: Selection, axis: MirrorAxis) -> Self {
+        Self {
+            region_id,
+            selection,
+            axis,
+        }
+    }
+}
+
+impl EditCommand for MirrorCommand {
+    fn create_patch(&self, document: &Document) -> Result<PatchSet, EditError> {
+        if self.selection.is_empty() {
+            return Ok(PatchSet::empty());
+        }
+        let region = get_region(document, &self.region_id)?;
+        let clipboard = Clipboard::from_region_selection(region, &self.selection)?;
+        if clipboard.is_empty() {
+            return Ok(PatchSet::empty());
+        }
+
+        let min = self.selection.bounds().min();
+
+        let mirrored = clipboard.mirrored(self.axis);
+
+        let mut blocks_to_clear = Vec::new();
+        visit_occupied_selected_blocks(region, &self.selection, |pos, _| {
+            blocks_to_clear.push(pos);
+            Ok(())
+        })?;
+
+        let mut blocks_to_set = Vec::new();
+        for block in &mirrored.blocks {
+            let world_pos = Position::new(
+                min.x + block.offset[0],
+                min.y + block.offset[1],
+                min.z + block.offset[2],
+            );
+            if let Some(local_pos) = region.world_to_local(world_pos) {
+                blocks_to_set.push((local_pos, block.state.clone()));
+            }
+        }
+
+        apply_block_updates(&self.region_id, region, blocks_to_clear, blocks_to_set)
+    }
+}
+
+fn apply_block_updates(
+    region_id: &RegionId,
+    region: &Region,
+    blocks_to_clear: impl IntoIterator<Item = BlockPosition>,
+    blocks_to_set: impl IntoIterator<Item = (BlockPosition, BlockState)>,
+) -> Result<PatchSet, EditError> {
+    let mut targets: HashMap<BlockPosition, Option<BlockState>> = HashMap::new();
+    for pos in blocks_to_clear {
+        targets.insert(pos, None);
+    }
+    for (pos, state) in blocks_to_set {
+        targets.insert(pos, Some(state));
+    }
+
+    let mut next_palette_index = region.palette().len();
+    let mut state_to_index: HashMap<BlockState, PaletteIndex> = HashMap::new();
+    let mut additions: Vec<(PaletteIndex, BlockState)> = Vec::new();
+
+    let mut changes = Vec::new();
+
+    for (pos, target_state) in targets {
+        let current_index = region.block_index_at(pos).map_err(EditError::RegionBlock)?;
+        match target_state {
+            None => {
+                if current_index.is_some() {
+                    changes.push(BlockChange::new(pos, current_index, None));
+                }
+            }
+            Some(state) => {
+                let target_index = if let Some(idx) = region.palette().index_of(&state) {
+                    idx
+                } else if let Some(&idx) = state_to_index.get(&state) {
+                    idx
+                } else {
+                    let idx = PaletteIndex::new(
+                        u32::try_from(next_palette_index)
+                            .map_err(|_| EditError::PaletteCapacity)?,
+                    );
+                    next_palette_index += 1;
+                    state_to_index.insert(state.clone(), idx);
+                    additions.push((idx, state.clone()));
+                    idx
+                };
+
+                if current_index != Some(target_index) {
+                    changes.push(BlockChange::new(pos, current_index, Some(target_index)));
+                }
+            }
+        }
+    }
+
+    if changes.is_empty() {
+        return Ok(PatchSet::empty());
+    }
+
+    Ok(PatchSet::from_changes_with_palette_additions(
+        region_id.clone(),
+        changes,
+        additions,
+    ))
+}
+
 fn get_region<'a>(document: &'a Document, id: &RegionId) -> Result<&'a Region, EditError> {
     document
         .region(id)
         .ok_or_else(|| EditError::MissingRegion(id.clone()))
 }
 
-fn visit_occupied_selected_blocks(
+pub(crate) fn visit_occupied_selected_blocks(
     region: &Region,
     selection: &Selection,
     mut visit: impl FnMut(BlockPosition, PaletteIndex) -> Result<(), EditError>,

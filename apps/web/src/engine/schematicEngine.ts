@@ -31,6 +31,40 @@ export interface SelectionBounds {
   max: [number, number, number];
 }
 
+export interface FillRequest {
+  region_id: string;
+  selection: SelectionBounds;
+  block: string;
+}
+
+export interface CopyRequest {
+  region_id: string;
+  selection: SelectionBounds;
+}
+
+export interface PasteRequest {
+  region_id: string;
+  target: [number, number, number];
+}
+
+export interface MoveRequest {
+  region_id: string;
+  selection: SelectionBounds;
+  delta: [number, number, number];
+}
+
+export interface RotateRequest {
+  region_id: string;
+  selection: SelectionBounds;
+  angle_deg: number;
+}
+
+export interface MirrorRequest {
+  region_id: string;
+  selection: SelectionBounds;
+  axis: 'x' | 'z' | string;
+}
+
 export interface ReplaceRequest {
   region_id: string;
   selection?: SelectionBounds;
@@ -127,6 +161,12 @@ interface WasmExports {
   schematic_load_litematic(ptr: number, len: number): number;
   schematic_get_region_mesh(ptr: number, len: number): number;
   schematic_preview_replace(ptr: number, len: number): number;
+  schematic_preview_fill(ptr: number, len: number): number;
+  schematic_copy_selection(ptr: number, len: number): number;
+  schematic_preview_paste(ptr: number, len: number): number;
+  schematic_preview_move(ptr: number, len: number): number;
+  schematic_preview_rotate(ptr: number, len: number): number;
+  schematic_preview_mirror(ptr: number, len: number): number;
   schematic_preview_cleanup(ptr: number, len: number): number;
   schematic_commit_preview(): number;
   schematic_cancel_preview(): number;
@@ -190,6 +230,54 @@ export class SchematicEngine {
     const jsonBytes = this.textEncoder.encode(JSON.stringify(req));
     const code = this.callWithBytes(jsonBytes, (ptr, len) =>
       this.exports.schematic_preview_replace(ptr, len),
+    );
+    return this.handleJsonResponse<PreviewSummary>(code);
+  }
+
+  previewFill(req: FillRequest): PreviewSummary {
+    const jsonBytes = this.textEncoder.encode(JSON.stringify(req));
+    const code = this.callWithBytes(jsonBytes, (ptr, len) =>
+      this.exports.schematic_preview_fill(ptr, len),
+    );
+    return this.handleJsonResponse<PreviewSummary>(code);
+  }
+
+  copySelection(req: CopyRequest): number {
+    const jsonBytes = this.textEncoder.encode(JSON.stringify(req));
+    const code = this.callWithBytes(jsonBytes, (ptr, len) =>
+      this.exports.schematic_copy_selection(ptr, len),
+    );
+    return this.handleJsonResponse<number>(code);
+  }
+
+  previewPaste(req: PasteRequest): PreviewSummary {
+    const jsonBytes = this.textEncoder.encode(JSON.stringify(req));
+    const code = this.callWithBytes(jsonBytes, (ptr, len) =>
+      this.exports.schematic_preview_paste(ptr, len),
+    );
+    return this.handleJsonResponse<PreviewSummary>(code);
+  }
+
+  previewMove(req: MoveRequest): PreviewSummary {
+    const jsonBytes = this.textEncoder.encode(JSON.stringify(req));
+    const code = this.callWithBytes(jsonBytes, (ptr, len) =>
+      this.exports.schematic_preview_move(ptr, len),
+    );
+    return this.handleJsonResponse<PreviewSummary>(code);
+  }
+
+  previewRotate(req: RotateRequest): PreviewSummary {
+    const jsonBytes = this.textEncoder.encode(JSON.stringify(req));
+    const code = this.callWithBytes(jsonBytes, (ptr, len) =>
+      this.exports.schematic_preview_rotate(ptr, len),
+    );
+    return this.handleJsonResponse<PreviewSummary>(code);
+  }
+
+  previewMirror(req: MirrorRequest): PreviewSummary {
+    const jsonBytes = this.textEncoder.encode(JSON.stringify(req));
+    const code = this.callWithBytes(jsonBytes, (ptr, len) =>
+      this.exports.schematic_preview_mirror(ptr, len),
     );
     return this.handleJsonResponse<PreviewSummary>(code);
   }

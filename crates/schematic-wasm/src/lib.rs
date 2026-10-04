@@ -1,10 +1,11 @@
 pub mod session;
 
 pub use session::{
-    BlockInspection, BlockInspectionRequest, CleanupRequest, Diagnostic, DiagnosticSeverity,
-    DocumentInspection, DocumentMetadataInspection, DocumentSummary, Fixability, HistorySummary,
-    PreviewDiff, PreviewSummary, RegionInspectionSummary, RegionMeshData, RegionSummary,
-    ReplaceRequest, SelectionBounds, Session, SessionStatus,
+    BlockInspection, BlockInspectionRequest, CleanupRequest, CopyRequest, Diagnostic,
+    DiagnosticSeverity, DocumentInspection, DocumentMetadataInspection, DocumentSummary,
+    FillRequest, Fixability, HistorySummary, MirrorRequest, MoveRequest, PasteRequest, PreviewDiff,
+    PreviewSummary, RegionInspectionSummary, RegionMeshData, RegionSummary, ReplaceRequest,
+    RotateRequest, SelectionBounds, Session, SessionStatus,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -107,6 +108,156 @@ mod wasm_exports {
         SESSION.with(|s| {
             let mut session = s.borrow_mut();
             match session.preview_replace(req) {
+                Ok(res) => {
+                    session.set_json_response(&res);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_preview_fill(ptr: *const u8, len: usize) -> i32 {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let req: FillRequest = match serde_json::from_slice(slice) {
+            Ok(r) => r,
+            Err(e) => {
+                SESSION.with(|s| s.borrow_mut().set_error_response(&e.to_string()));
+                return -1;
+            }
+        };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.preview_fill(req) {
+                Ok(res) => {
+                    session.set_json_response(&res);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_copy_selection(ptr: *const u8, len: usize) -> i32 {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let req: CopyRequest = match serde_json::from_slice(slice) {
+            Ok(r) => r,
+            Err(e) => {
+                SESSION.with(|s| s.borrow_mut().set_error_response(&e.to_string()));
+                return -1;
+            }
+        };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.copy_selection(req) {
+                Ok(count) => {
+                    session.set_json_response(&count);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_preview_paste(ptr: *const u8, len: usize) -> i32 {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let req: PasteRequest = match serde_json::from_slice(slice) {
+            Ok(r) => r,
+            Err(e) => {
+                SESSION.with(|s| s.borrow_mut().set_error_response(&e.to_string()));
+                return -1;
+            }
+        };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.preview_paste(req) {
+                Ok(res) => {
+                    session.set_json_response(&res);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_preview_move(ptr: *const u8, len: usize) -> i32 {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let req: MoveRequest = match serde_json::from_slice(slice) {
+            Ok(r) => r,
+            Err(e) => {
+                SESSION.with(|s| s.borrow_mut().set_error_response(&e.to_string()));
+                return -1;
+            }
+        };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.preview_move(req) {
+                Ok(res) => {
+                    session.set_json_response(&res);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_preview_rotate(ptr: *const u8, len: usize) -> i32 {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let req: RotateRequest = match serde_json::from_slice(slice) {
+            Ok(r) => r,
+            Err(e) => {
+                SESSION.with(|s| s.borrow_mut().set_error_response(&e.to_string()));
+                return -1;
+            }
+        };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.preview_rotate(req) {
+                Ok(res) => {
+                    session.set_json_response(&res);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn schematic_preview_mirror(ptr: *const u8, len: usize) -> i32 {
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let req: MirrorRequest = match serde_json::from_slice(slice) {
+            Ok(r) => r,
+            Err(e) => {
+                SESSION.with(|s| s.borrow_mut().set_error_response(&e.to_string()));
+                return -1;
+            }
+        };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.preview_mirror(req) {
                 Ok(res) => {
                     session.set_json_response(&res);
                     0

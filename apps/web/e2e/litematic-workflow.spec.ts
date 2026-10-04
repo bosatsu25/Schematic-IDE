@@ -73,6 +73,48 @@ test.describe('End-to-End Litematic Browser Workflow', () => {
     await page.getByTestId('redo-btn').click();
     await expect(page.getByTestId('dirty-indicator')).toBeVisible();
 
+    // 9.5. Structural Editing (Fill, Copy, Paste, Move)
+    await page.getByTestId('sel-min-x').fill('2');
+    await page.getByTestId('sel-min-y').fill('2');
+    await page.getByTestId('sel-min-z').fill('2');
+    await page.getByTestId('sel-max-x').fill('3');
+    await page.getByTestId('sel-max-y').fill('2');
+    await page.getByTestId('sel-max-z').fill('3');
+    await page.getByTestId('fill-block-input').fill('minecraft:oak_planks');
+    await page.getByTestId('preview-fill-btn').click();
+    await expect(page.getByTestId('preview-panel')).toBeVisible();
+    await expect(page.getByTestId('preview-changed-count')).toHaveText('4');
+    await page.getByTestId('commit-btn').click();
+    await expect(page.getByTestId('preview-panel')).not.toBeVisible();
+
+    // Copy selection
+    await page.getByTestId('copy-selection-btn').click();
+    await expect(page.getByTestId('copy-selection-btn')).toContainText('4 blocks copied');
+
+    // Paste at (6, 2, 6)
+    await page.getByTestId('paste-target-x').fill('6');
+    await page.getByTestId('paste-target-y').fill('2');
+    await page.getByTestId('paste-target-z').fill('6');
+    await page.getByTestId('preview-paste-btn').click();
+    await expect(page.getByTestId('preview-panel')).toBeVisible();
+    await expect(page.getByTestId('preview-changed-count')).toHaveText('4');
+    await page.getByTestId('commit-btn').click();
+
+    // Move selection: select [6, 2, 6]..[7, 2, 7] and move by [0, 1, 0]
+    await page.getByTestId('sel-min-x').fill('6');
+    await page.getByTestId('sel-min-y').fill('2');
+    await page.getByTestId('sel-min-z').fill('6');
+    await page.getByTestId('sel-max-x').fill('7');
+    await page.getByTestId('sel-max-y').fill('2');
+    await page.getByTestId('sel-max-z').fill('7');
+    await page.getByTestId('move-dx').fill('0');
+    await page.getByTestId('move-dy').fill('1');
+    await page.getByTestId('move-dz').fill('0');
+    await page.getByTestId('preview-move-btn').click();
+    await expect(page.getByTestId('preview-panel')).toBeVisible();
+    await expect(page.getByTestId('preview-changed-count')).toHaveText('8');
+    await page.getByTestId('commit-btn').click();
+
     // 10. VoxelWeave Cleanup Tool
     await page.getByTestId('cleanup-max-size-input').fill('2');
     await page.getByTestId('preview-cleanup-btn').click();
@@ -98,10 +140,9 @@ test.describe('End-to-End Litematic Browser Workflow', () => {
 
     await expect(page.getByTestId('doc-name')).toHaveText('WasmTestSchematic');
     await expect(page.getByTestId('region-selector')).toHaveValue('MainRegion');
-    // After replace and cleanup, non-air count should be less than original 12 (granite island cleaned up)
+    // After replace, fill, paste, move, and cleanup, non-air count should be exactly 18 blocks (12 original + 4 fill + 4 paste - 2 cleanup)
     const blockCountText = await page.getByTestId('region-block-count').textContent();
     const count = parseInt(blockCountText || '0', 10);
-    expect(count).toBeLessThan(12);
-    expect(count).toBeGreaterThan(0);
+    expect(count).toBe(18);
   });
 });

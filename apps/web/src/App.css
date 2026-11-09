@@ -392,6 +392,36 @@ body, html {
   color: var(--warning-color);
 }
 
+/* Service worker update prompt */
+.sw-update-banner {
+  position: fixed;
+  right: 16px;
+  bottom: 36px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--accent-color);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.sw-update-banner button {
+  background-color: var(--accent-color);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.sw-update-banner button:hover {
+  background-color: var(--accent-hover);
+}
+
 /* Sidebar Tab Navigation */
 .sidebar-tabs {
   display: flex;

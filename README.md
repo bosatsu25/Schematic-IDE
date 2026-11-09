@@ -18,7 +18,7 @@ A local-first, browser-based IDE for Minecraft structures.
   - **Wave 8D**: Multi-format adapters (Sponge `.schem`, Java Structure `.nbt`, cross-format diff).
   - **Wave 8E**: Material aggregation table, 64-item stack calculation, structural metrics, and CSV export.
   - **Wave 8F**: Performance benchmarks at 1M, 5M, and 10M block scale (`docs/benchmarks.md`).
-  - **Wave 8G**: PWA deployment, Web App Manifest, offline service worker shell (`sw.js`), and installable icons.
+  - **Wave 8G**: PWA deployment, Web App Manifest, offline service worker shell (`sw.js`, generated at build time with a versioned precache), and installable icons.
 - **Phase 9+ (Future Roadmap)**:
   - Surface relax / smoothing, procedural gradients, dithering, and 3D model importer integrations (see [docs/roadmap.md](./docs/roadmap.md)).
 

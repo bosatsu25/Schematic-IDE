@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { Viewport } from './components/Viewport';
 import { ToolsPanel } from './components/ToolsPanel';
+import { UpdateBanner } from './sw/UpdateBanner';
 import { useSchematicStore } from './store/schematicStore';
 import './App.css';
 
@@ -43,6 +44,8 @@ export const App: React.FC = () => {
           </span>
         )}
       </footer>
+
+      <UpdateBanner />
     </div>
   );
 };

@@ -4,6 +4,7 @@ mod coordinates;
 mod document;
 mod entity;
 mod metadata;
+mod nbt;
 mod palette;
 mod region;
 mod selection;
@@ -12,8 +13,9 @@ pub use block_state::{BlockProperty, BlockState, BlockStateError};
 pub use chunk::{Chunk, ChunkIndexError, CHUNK_EDGE, CHUNK_VOLUME};
 pub use coordinates::{BlockPosition, Bounds, ChunkPosition, Position, Size};
 pub use document::{Document, DocumentRevision};
-pub use entity::{BlockEntityRef, EntityRef};
+pub use entity::{BlockEntityRef, EntityRef, NbtCompound};
 pub use metadata::DocumentMetadata;
+pub use nbt::NbtTag;
 pub use palette::{Palette, PaletteError, PaletteIndex};
 pub use region::{Region, RegionBlockError, RegionId};
 pub use selection::{

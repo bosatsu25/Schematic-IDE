@@ -13,4 +13,5 @@ schematic-core = { path = "../schematic-core" }
 schematic-analysis = { path = "../schematic-analysis" }
 
 [dev-dependencies]
+schematic-validate = { path = "../schematic-validate" }
 proptest = "1"

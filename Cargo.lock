@@ -317,6 +317,7 @@ dependencies = [
  "proptest",
  "schematic-analysis",
  "schematic-core",
+ "schematic-validate",
 ]
 
 [[package]]

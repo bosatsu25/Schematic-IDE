@@ -292,14 +292,8 @@ pub fn diff_documents(
 
     // Entity & BlockEntity diffs
     let mut entity_diffs = Vec::new();
-    let mut be_before: BTreeMap<Position, String> = BTreeMap::new();
-    for be in before.block_entities() {
-        be_before.insert(be.position, be.kind.clone());
-    }
-    let mut be_after: BTreeMap<Position, String> = BTreeMap::new();
-    for be in after.block_entities() {
-        be_after.insert(be.position, be.kind.clone());
-    }
+    let be_before = block_entities_by_world(before);
+    let be_after = block_entities_by_world(after);
 
     let mut all_be_pos = BTreeSet::new();
     for pos in be_before.keys() {
@@ -310,44 +304,21 @@ pub fn diff_documents(
     }
 
     for pos in all_be_pos {
-        let b = be_before.get(&pos).cloned();
-        let a = be_after.get(&pos).cloned();
-        match (b, a) {
-            (Some(kind), None) => {
-                entity_diffs.push(EntityDiff {
-                    position: [pos.x, pos.y, pos.z],
-                    kind: DiffKind::Removed,
-                    before_type: Some(kind),
-                    after_type: None,
-                });
-            }
-            (None, Some(kind)) => {
-                entity_diffs.push(EntityDiff {
-                    position: [pos.x, pos.y, pos.z],
-                    kind: DiffKind::Added,
-                    before_type: None,
-                    after_type: Some(kind),
-                });
-            }
-            (Some(kb), Some(ka)) => {
-                if kb != ka {
-                    entity_diffs.push(EntityDiff {
-                        position: [pos.x, pos.y, pos.z],
-                        kind: DiffKind::Modified,
-                        before_type: Some(kb),
-                        after_type: Some(ka),
-                    });
-                } else if include_unchanged {
-                    entity_diffs.push(EntityDiff {
-                        position: [pos.x, pos.y, pos.z],
-                        kind: DiffKind::Unchanged,
-                        before_type: Some(kb),
-                        after_type: Some(ka),
-                    });
-                }
-            }
-            (None, None) => {}
-        }
+        let b = be_before.get(&pos);
+        let a = be_after.get(&pos);
+        let kind = match (b, a) {
+            (Some(_), None) => DiffKind::Removed,
+            (None, Some(_)) => DiffKind::Added,
+            (Some(kb), Some(ka)) if kb != ka => DiffKind::Modified,
+            (Some(_), Some(_)) if include_unchanged => DiffKind::Unchanged,
+            _ => continue,
+        };
+        entity_diffs.push(EntityDiff {
+            position: [pos.x, pos.y, pos.z],
+            kind,
+            before_type: b.map(|(k, _)| k.clone()),
+            after_type: a.map(|(k, _)| k.clone()),
+        });
     }
 
     DocumentDiff {
@@ -359,4 +330,21 @@ pub fn diff_documents(
         block_diffs,
         entity_diffs,
     }
+}
+
+/// Block entities keyed by world position, with `(kind, payload)` so payload
+/// edits (e.g. chest contents) are reported as modifications.
+fn block_entities_by_world(
+    doc: &Document,
+) -> BTreeMap<Position, (String, schematic_core::NbtCompound)> {
+    let mut out = BTreeMap::new();
+    for be in doc.block_entities() {
+        let Some(region) = doc.region(&be.region) else {
+            continue;
+        };
+        if let Some(world) = region.local_to_world(be.position) {
+            out.insert(world, (be.kind.clone(), be.data.clone()));
+        }
+    }
+    out
 }

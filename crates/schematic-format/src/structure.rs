@@ -1,5 +1,6 @@
 use crate::{
-    litematic::FormatError,
+    convert::merge_regions,
+    litematic::{double_list, take_double_list, take_string, FormatError},
     nbt::{decode_gzip_or_raw, encode_gzip, NbtTag},
 };
 use schematic_core::{
@@ -150,44 +151,41 @@ impl StructureDocument {
 
                 // Block entity NBT if present
                 if let Some(nbt_tag) = block_compound.get("nbt").and_then(|t| t.as_compound()) {
-                    let id_str = nbt_tag
-                        .get("id")
-                        .or_else(|| nbt_tag.get("Id"))
-                        .and_then(|t| t.as_string())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "minecraft:chest".to_string());
-
-                    doc.add_block_entity(BlockEntityRef::new(
-                        id_str,
-                        Position::new(bx as i32, by as i32, bz as i32),
-                    ));
+                    let mut data = nbt_tag.clone();
+                    let kind = take_string(&mut data, &["id", "Id"])
+                        .unwrap_or_else(|| "unknown".to_string());
+                    data.remove("x");
+                    data.remove("y");
+                    data.remove("z");
+                    doc.add_block_entity(
+                        BlockEntityRef::new(
+                            region_id.clone(),
+                            kind,
+                            BlockPosition::new(bx, by, bz),
+                        )
+                        .with_data(data),
+                    );
                 }
             }
         }
 
-        // Parse entities: List of Compound
+        // Parse entities: List of Compound {pos, blockPos, nbt}
         if let Some(entities_list) = root.get("entities").and_then(|t| t.as_list()) {
             for ent_tag in entities_list {
-                if let Some(ent_compound) = ent_tag.as_compound() {
-                    let pos_list = ent_compound.get("pos").and_then(|t| t.as_list());
-
-                    let mut coords = [0.0f64; 3];
-                    if let Some(pos) = pos_list {
-                        for (i, p) in pos.iter().take(3).enumerate() {
-                            coords[i] = p.as_f64().unwrap_or(0.0);
-                        }
-                    }
-
-                    let id_str = ent_compound
-                        .get("nbt")
-                        .and_then(|t| t.as_compound())
-                        .and_then(|n| n.get("id"))
-                        .and_then(|t| t.as_string())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "minecraft:pig".to_string());
-
-                    doc.add_entity(EntityRef::new(id_str, coords));
-                }
+                let Some(ent_compound) = ent_tag.as_compound() else {
+                    continue;
+                };
+                let mut outer = ent_compound.clone();
+                let pos = take_double_list(&mut outer, "pos").unwrap_or([0.0; 3]);
+                let mut data = outer
+                    .get("nbt")
+                    .and_then(|t| t.as_compound())
+                    .cloned()
+                    .unwrap_or_default();
+                let kind =
+                    take_string(&mut data, &["id", "Id"]).unwrap_or_else(|| "unknown".to_string());
+                data.remove("Pos");
+                doc.add_entity(EntityRef::new(region_id.clone(), kind, pos).with_data(data));
             }
         }
 
@@ -210,7 +208,11 @@ impl StructureDocument {
         })
     }
 
+    /// Exports vanilla Structure NBT. Multi-region documents are flattened
+    /// (see [`crate::convert::merge_regions`]).
     pub fn export(&self, doc: &Document) -> Result<Vec<u8>, FormatError> {
+        let merged = merge_regions(doc)?;
+        let doc = &merged.document;
         let region = doc.regions().next().ok_or_else(|| {
             FormatError::InvalidStructure("Document contains no regions".to_string())
         })?;
@@ -308,20 +310,10 @@ impl StructureDocument {
                     );
                     block_compound.insert("state".to_string(), NbtTag::Int(state_idx));
 
-                    // Check for block entity at this position
-                    let world_pos = Position::new(
-                        region.origin().x + x as i32,
-                        region.origin().y + y as i32,
-                        region.origin().z + z as i32,
-                    );
-                    for be in doc.block_entities() {
-                        if be.position == world_pos {
-                            let mut nbt_compound = BTreeMap::new();
-                            nbt_compound.insert("id".to_string(), NbtTag::String(be.kind.clone()));
-                            block_compound
-                                .insert("nbt".to_string(), NbtTag::Compound(nbt_compound));
-                            break;
-                        }
+                    if let Some(be) = doc.block_entity_at(region.id(), local_pos) {
+                        let mut nbt_compound = be.data.clone();
+                        nbt_compound.insert("id".to_string(), NbtTag::String(be.kind.clone()));
+                        block_compound.insert("nbt".to_string(), NbtTag::Compound(nbt_compound));
                     }
 
                     blocks_list.push(NbtTag::Compound(block_compound));
@@ -332,32 +324,22 @@ impl StructureDocument {
 
         // Build entities list
         let mut entities_list = Vec::new();
-        for ent in doc.entities() {
+        for ent in doc.entities_in(region.id()) {
             let mut ent_compound = BTreeMap::new();
-            ent_compound.insert(
-                "pos".to_string(),
-                NbtTag::List(
-                    6,
-                    vec![
-                        NbtTag::Double(ent.position[0]),
-                        NbtTag::Double(ent.position[1]),
-                        NbtTag::Double(ent.position[2]),
-                    ],
-                ),
-            );
+            ent_compound.insert("pos".to_string(), double_list(ent.position));
             ent_compound.insert(
                 "blockPos".to_string(),
                 NbtTag::List(
                     3,
-                    vec![
-                        NbtTag::Int(ent.position[0] as i32),
-                        NbtTag::Int(ent.position[1] as i32),
-                        NbtTag::Int(ent.position[2] as i32),
-                    ],
+                    ent.position
+                        .iter()
+                        .map(|v| NbtTag::Int(v.floor() as i32))
+                        .collect(),
                 ),
             );
-            let mut nbt = BTreeMap::new();
+            let mut nbt = ent.data.clone();
             nbt.insert("id".to_string(), NbtTag::String(ent.kind.clone()));
+            nbt.insert("Pos".to_string(), double_list(ent.position));
             ent_compound.insert("nbt".to_string(), NbtTag::Compound(nbt));
             entities_list.push(NbtTag::Compound(ent_compound));
         }

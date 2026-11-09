@@ -313,7 +313,7 @@ fn test_block_entities_and_entities_preservation() {
     let bes: Vec<_> = parsed.document.block_entities().collect();
     assert_eq!(bes.len(), 1);
     assert_eq!(bes[0].kind, "minecraft:chest");
-    assert_eq!(bes[0].position, Position::new(1, 1, 1));
+    assert_eq!(bes[0].position, BlockPosition::new(1, 1, 1));
 
     let ents: Vec<_> = parsed.document.entities().collect();
     assert_eq!(ents.len(), 1);
@@ -323,16 +323,15 @@ fn test_block_entities_and_entities_preservation() {
     // Re-export and verify full NBT payload preserved (including CustomName)
     let exported = parsed.export(&parsed.document).unwrap();
     let reparsed = LitematicDocument::parse(&exported).unwrap();
-    let raw = reparsed
-        .raw_regions
-        .get(&RegionId::new("EntityRegion"))
-        .unwrap();
-    assert_eq!(raw.block_entities.len(), 1);
-    let be_comp = raw.block_entities[0].as_compound().unwrap();
+    let bes: Vec<_> = reparsed.document.block_entities().collect();
+    assert_eq!(bes.len(), 1);
     assert_eq!(
-        be_comp.get("CustomName").unwrap().as_string(),
+        bes[0].data.get("CustomName").unwrap().as_string(),
         Some("{\"text\":\"Treasure\"}")
     );
+    let ents: Vec<_> = reparsed.document.entities().collect();
+    assert_eq!(ents.len(), 1);
+    assert_eq!(ents[0].position, [1.5, 2.0, 1.5]);
 }
 
 #[test]

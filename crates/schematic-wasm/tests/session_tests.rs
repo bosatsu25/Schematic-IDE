@@ -419,3 +419,86 @@ fn test_analyze_document_in_session() {
     // Verify features breakdown
     assert!(!report.statistics.feature_counts.is_empty());
 }
+
+/// Issue #21 end-to-end through the session boundary: open a `.litematic`
+/// with a filled chest, move the chest, export, re-open, and find the items
+/// at the new position with nothing left behind.
+#[test]
+fn moved_chest_keeps_its_contents_through_export_and_reload() {
+    use schematic_core::{BlockEntityRef, NbtCompound, NbtTag};
+    use schematic_wasm::MoveRequest;
+
+    let region_id = RegionId::new("Main");
+    let mut doc = Document::new(DocumentMetadata {
+        name: Some("ChestMove".into()),
+        ..Default::default()
+    });
+    let mut region = Region::new(
+        region_id.clone(),
+        Position::new(0, 0, 0),
+        Size::new(8, 2, 8),
+    );
+    let chest = region
+        .palette_mut()
+        .intern(BlockState::new("minecraft:chest", []).unwrap())
+        .unwrap();
+    region
+        .set_block_index(BlockPosition::new(1, 0, 1), Some(chest))
+        .unwrap();
+    doc.insert_region(region);
+    let mut item = NbtCompound::new();
+    item.insert("id".into(), NbtTag::String("minecraft:emerald".into()));
+    item.insert("Count".into(), NbtTag::Byte(7));
+    let mut data = NbtCompound::new();
+    data.insert(
+        "Items".into(),
+        NbtTag::List(10, vec![NbtTag::Compound(item)]),
+    );
+    doc.add_block_entity(
+        BlockEntityRef::new(
+            region_id.clone(),
+            "minecraft:chest",
+            BlockPosition::new(1, 0, 1),
+        )
+        .with_data(data.clone()),
+    );
+    let lit = LitematicDocument::from_document(doc, 3465);
+    let bytes = lit.export(&lit.document).unwrap();
+
+    let mut session = Session::new();
+    session.load_schematic(&bytes).unwrap();
+    let preview = session
+        .preview_move(MoveRequest {
+            region_id: "Main".into(),
+            selection: SelectionBounds {
+                min: [1, 0, 1],
+                max: [1, 0, 1],
+            },
+            delta: [4, 1, 2],
+        })
+        .unwrap();
+    assert!(preview.can_commit);
+    assert_eq!(preview.changed_block_entities, 2, "remove old + insert new");
+    session.commit_preview().unwrap();
+
+    let reloaded = LitematicDocument::parse(&session.export_litematic().unwrap()).unwrap();
+    let bes: Vec<_> = reloaded.document.block_entities().collect();
+    assert_eq!(bes.len(), 1, "no orphan left at the old position");
+    assert_eq!(bes[0].position, BlockPosition::new(5, 1, 3));
+    assert_eq!(bes[0].data, data);
+
+    // Inspection reads the moved block entity from the edited document.
+    let inspection = session
+        .inspect_block(&schematic_wasm::BlockInspectionRequest {
+            region_id: "Main".into(),
+            x: 5,
+            y: 1,
+            z: 3,
+        })
+        .unwrap()
+        .unwrap();
+    let be_json = inspection
+        .block_entity
+        .expect("block entity at new position");
+    assert_eq!(be_json["id"], "minecraft:chest");
+}

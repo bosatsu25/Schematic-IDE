@@ -4,7 +4,7 @@ use crate::{
 };
 use schematic_core::{
     BlockEntityRef, BlockPosition, BlockProperty, BlockState, Document, DocumentMetadata,
-    EntityRef, PaletteIndex, Position, Region, RegionId, Size,
+    EntityRef, NbtCompound, PaletteIndex, Position, Region, RegionId, Size,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -39,8 +39,6 @@ impl From<NbtError> for FormatError {
 pub struct RawRegionData {
     pub original_pos: [i32; 3],
     pub original_size: [i32; 3],
-    pub block_entities: Vec<NbtTag>,
-    pub entities: Vec<NbtTag>,
     pub pending_block_ticks: Option<Vec<NbtTag>>,
     pub pending_fluid_ticks: Option<Vec<NbtTag>>,
     pub unknown_tags: BTreeMap<String, NbtTag>,
@@ -267,52 +265,39 @@ impl LitematicDocument {
                     }
                 }
 
-                // Block Entities
-                let mut block_entities = Vec::new();
+                // Block Entities (container coordinates, mapped like blocks)
+                let flip = AxisFlip::new([sx, sy, sz]);
                 if let Some(be_list) = reg_compound.get("TileEntities").and_then(|t| t.as_list()) {
                     for be_tag in be_list {
-                        block_entities.push(be_tag.clone());
-                        if let Some(be_comp) = be_tag.as_compound() {
-                            let id = be_comp
-                                .get("id")
-                                .and_then(|t| t.as_string())
-                                .unwrap_or("unknown");
-                            let bx = be_comp.get("x").and_then(|t| t.as_i32()).unwrap_or(0);
-                            let by = be_comp.get("y").and_then(|t| t.as_i32()).unwrap_or(0);
-                            let bz = be_comp.get("z").and_then(|t| t.as_i32()).unwrap_or(0);
-                            document.add_block_entity(BlockEntityRef::new(
-                                id,
-                                Position::new(bx, by, bz),
-                            ));
-                        }
+                        let Some(be_comp) = be_tag.as_compound() else {
+                            continue;
+                        };
+                        let mut data = be_comp.clone();
+                        let id = take_string(&mut data, &["id", "Id"])
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let bx = take_int(&mut data, "x").unwrap_or(0);
+                        let by = take_int(&mut data, "y").unwrap_or(0);
+                        let bz = take_int(&mut data, "z").unwrap_or(0);
+                        document.add_block_entity(
+                            BlockEntityRef::new(region_id.clone(), id, flip.block([bx, by, bz]))
+                                .with_data(data),
+                        );
                     }
                 }
 
                 // Entities
-                let mut entities = Vec::new();
                 if let Some(ent_list) = reg_compound.get("Entities").and_then(|t| t.as_list()) {
                     for ent_tag in ent_list {
-                        entities.push(ent_tag.clone());
-                        if let Some(ent_comp) = ent_tag.as_compound() {
-                            let id = ent_comp
-                                .get("id")
-                                .and_then(|t| t.as_string())
-                                .unwrap_or("unknown");
-                            let pos_arr = ent_comp
-                                .get("Pos")
-                                .and_then(|t| t.as_list())
-                                .map(|l| {
-                                    let mut p = [0.0; 3];
-                                    for (i, val) in l.iter().take(3).enumerate() {
-                                        if let NbtTag::Double(d) = val {
-                                            p[i] = *d;
-                                        }
-                                    }
-                                    p
-                                })
-                                .unwrap_or([0.0, 0.0, 0.0]);
-                            document.add_entity(EntityRef::new(id, pos_arr));
-                        }
+                        let Some(ent_comp) = ent_tag.as_compound() else {
+                            continue;
+                        };
+                        let mut data = ent_comp.clone();
+                        let id = take_string(&mut data, &["id", "Id"])
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let pos = take_double_list(&mut data, "Pos").unwrap_or([0.0; 3]);
+                        document.add_entity(
+                            EntityRef::new(region_id.clone(), id, flip.point(pos)).with_data(data),
+                        );
                     }
                 }
 
@@ -345,8 +330,6 @@ impl LitematicDocument {
                     RawRegionData {
                         original_pos: [px, py, pz],
                         original_size: [sx, sy, sz],
-                        block_entities,
-                        entities,
                         pending_block_ticks,
                         pending_fluid_ticks,
                         unknown_tags,
@@ -580,16 +563,31 @@ impl LitematicDocument {
             let packed = pack_block_states(&indices, bits);
             reg_compound.insert("BlockStates".to_string(), NbtTag::LongArray(packed));
 
-            // Preserved Block Entities, Entities, Pending Ticks, Unknown Tags
+            // Block Entities & Entities (from the edited document)
+            let flip = AxisFlip::new([sx, sy, sz]);
+            let mut tile_entities = Vec::new();
+            for be in doc.block_entities_in(region.id()) {
+                let mut compound = be.data.clone();
+                let [x, y, z] = flip.unblock(be.position);
+                compound.insert("id".to_string(), NbtTag::String(be.kind.clone()));
+                compound.insert("x".to_string(), NbtTag::Int(x));
+                compound.insert("y".to_string(), NbtTag::Int(y));
+                compound.insert("z".to_string(), NbtTag::Int(z));
+                tile_entities.push(NbtTag::Compound(compound));
+            }
+            reg_compound.insert("TileEntities".to_string(), NbtTag::List(10, tile_entities));
+
+            let mut entities = Vec::new();
+            for entity in doc.entities_in(region.id()) {
+                let mut compound = entity.data.clone();
+                compound.insert("id".to_string(), NbtTag::String(entity.kind.clone()));
+                compound.insert("Pos".to_string(), double_list(flip.point(entity.position)));
+                entities.push(NbtTag::Compound(compound));
+            }
+            reg_compound.insert("Entities".to_string(), NbtTag::List(10, entities));
+
+            // Preserved Pending Ticks & Unknown Tags
             if let Some(raw) = raw_info {
-                reg_compound.insert(
-                    "TileEntities".to_string(),
-                    NbtTag::List(10, raw.block_entities.clone()),
-                );
-                reg_compound.insert(
-                    "Entities".to_string(),
-                    NbtTag::List(10, raw.entities.clone()),
-                );
                 if let Some(ticks) = &raw.pending_block_ticks {
                     reg_compound.insert(
                         "PendingBlockTicks".to_string(),
@@ -605,9 +603,6 @@ impl LitematicDocument {
                 for (uk, uv) in &raw.unknown_tags {
                     reg_compound.insert(uk.clone(), uv.clone());
                 }
-            } else {
-                reg_compound.insert("TileEntities".to_string(), NbtTag::List(10, Vec::new()));
-                reg_compound.insert("Entities".to_string(), NbtTag::List(10, Vec::new()));
             }
 
             regions_map.insert(
@@ -621,4 +616,85 @@ impl LitematicDocument {
         let encoded = encode_gzip("Litematic", &NbtTag::Compound(root_map))?;
         Ok(encoded)
     }
+}
+
+/// Maps Litematica container coordinates to region-local coordinates using the
+/// same per-axis flip applied to blocks for negative region sizes.
+struct AxisFlip {
+    len: [i64; 3],
+    negative: [bool; 3],
+}
+
+impl AxisFlip {
+    fn new(size: [i32; 3]) -> Self {
+        Self {
+            len: size.map(|s| s.unsigned_abs() as i64),
+            negative: size.map(|s| s < 0),
+        }
+    }
+
+    fn block(&self, c: [i32; 3]) -> BlockPosition {
+        let m = |i: usize| {
+            let v = c[i] as i64;
+            if self.negative[i] {
+                self.len[i] - 1 - v
+            } else {
+                v
+            }
+        };
+        BlockPosition::new(m(0), m(1), m(2))
+    }
+
+    fn unblock(&self, p: BlockPosition) -> [i32; 3] {
+        let c = p.coordinates();
+        [0, 1, 2].map(|i| {
+            if self.negative[i] {
+                (self.len[i] - 1 - c[i]) as i32
+            } else {
+                c[i] as i32
+            }
+        })
+    }
+
+    /// Continuous mapping; an involution, so it serves both directions.
+    fn point(&self, p: [f64; 3]) -> [f64; 3] {
+        [0, 1, 2].map(|i| {
+            if self.negative[i] {
+                self.len[i] as f64 - p[i]
+            } else {
+                p[i]
+            }
+        })
+    }
+}
+
+pub(crate) fn take_string(data: &mut NbtCompound, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(NbtTag::String(value)) = data.get(*key) {
+            let value = value.clone();
+            data.remove(*key);
+            return Some(value);
+        }
+    }
+    None
+}
+
+pub(crate) fn take_int(data: &mut NbtCompound, key: &str) -> Option<i32> {
+    let value = data.get(key).and_then(NbtTag::as_i32)?;
+    data.remove(key);
+    Some(value)
+}
+
+pub(crate) fn take_double_list(data: &mut NbtCompound, key: &str) -> Option<[f64; 3]> {
+    let list = data.get(key).and_then(NbtTag::as_list)?;
+    let mut out = [0.0; 3];
+    for (i, v) in list.iter().take(3).enumerate() {
+        out[i] = v.as_f64().unwrap_or(0.0);
+    }
+    data.remove(key);
+    Some(out)
+}
+
+pub(crate) fn double_list(p: [f64; 3]) -> NbtTag {
+    NbtTag::List(6, p.iter().map(|v| NbtTag::Double(*v)).collect())
 }

@@ -127,6 +127,10 @@ pub struct CleanupRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PreviewSummary {
     pub changed_count: usize,
+    #[serde(default)]
+    pub changed_block_entities: usize,
+    #[serde(default)]
+    pub changed_entities: usize,
     pub can_commit: bool,
     pub message: String,
 }
@@ -490,7 +494,9 @@ impl Session {
 
         Ok(PreviewSummary {
             changed_count,
-            can_commit: changed_count > 0,
+            changed_block_entities: preview_be_count(ws),
+            changed_entities: preview_entity_count(ws),
+            can_commit: ws.pending_preview().is_some_and(|p| !p.is_empty()),
             message: format!(
                 "Replaced {} block(s) from '{}' to '{}'",
                 changed_count, req.from_block, req.to_block
@@ -530,7 +536,9 @@ impl Session {
 
         Ok(PreviewSummary {
             changed_count,
-            can_commit: changed_count > 0,
+            changed_block_entities: preview_be_count(ws),
+            changed_entities: preview_entity_count(ws),
+            can_commit: ws.pending_preview().is_some_and(|p| !p.is_empty()),
             message: format!("Filled {} block(s) with '{}'", changed_count, req.block),
         })
     }
@@ -538,10 +546,9 @@ impl Session {
     pub fn copy_selection(&mut self, req: CopyRequest) -> Result<usize, String> {
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         let reg_id = RegionId::new(&req.region_id);
-        let region = ws
-            .committed()
-            .region(&reg_id)
-            .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
+        if ws.committed().region(&reg_id).is_none() {
+            return Err(format!("Region '{}' not found", req.region_id));
+        }
 
         let selection = Selection::from_corners(
             Position::new(
@@ -556,8 +563,8 @@ impl Session {
             ),
         );
 
-        let clipboard =
-            Clipboard::from_region_selection(region, &selection).map_err(|e| e.to_string())?;
+        let clipboard = Clipboard::from_document_selection(ws.committed(), &reg_id, &selection)
+            .map_err(|e| e.to_string())?;
         let count = clipboard.blocks.len();
         self.clipboard = Some(clipboard);
         Ok(count)
@@ -583,7 +590,9 @@ impl Session {
 
         Ok(PreviewSummary {
             changed_count,
-            can_commit: changed_count > 0,
+            changed_block_entities: preview_be_count(ws),
+            changed_entities: preview_entity_count(ws),
+            can_commit: ws.pending_preview().is_some_and(|p| !p.is_empty()),
             message: format!("Pasted {} block(s)", changed_count),
         })
     }
@@ -619,7 +628,9 @@ impl Session {
 
         Ok(PreviewSummary {
             changed_count,
-            can_commit: changed_count > 0,
+            changed_block_entities: preview_be_count(ws),
+            changed_entities: preview_entity_count(ws),
+            can_commit: ws.pending_preview().is_some_and(|p| !p.is_empty()),
             message: format!(
                 "Moved {} block(s) by [{}, {}, {}]",
                 changed_count, req.delta[0], req.delta[1], req.delta[2]
@@ -669,7 +680,9 @@ impl Session {
 
         Ok(PreviewSummary {
             changed_count,
-            can_commit: changed_count > 0,
+            changed_block_entities: preview_be_count(ws),
+            changed_entities: preview_entity_count(ws),
+            can_commit: ws.pending_preview().is_some_and(|p| !p.is_empty()),
             message: format!("Rotated {} block(s) by {}°", changed_count, req.angle_deg),
         })
     }
@@ -715,7 +728,9 @@ impl Session {
 
         Ok(PreviewSummary {
             changed_count,
-            can_commit: changed_count > 0,
+            changed_block_entities: preview_be_count(ws),
+            changed_entities: preview_entity_count(ws),
+            can_commit: ws.pending_preview().is_some_and(|p| !p.is_empty()),
             message: format!(
                 "Mirrored {} block(s) along {}-axis",
                 changed_count,
@@ -776,7 +791,9 @@ impl Session {
 
         Ok(PreviewSummary {
             changed_count,
-            can_commit: changed_count > 0,
+            changed_block_entities: preview_be_count(ws),
+            changed_entities: preview_entity_count(ws),
+            can_commit: ws.pending_preview().is_some_and(|p| !p.is_empty()),
             message: format!(
                 "Island cleanup: {} candidate block(s) identified for removal (max size <= {})",
                 changed_count, req.max_size
@@ -902,39 +919,13 @@ impl Session {
                 region.origin().z + req.z,
             ]);
 
-        let mut block_entity_json = None;
-        if let Some(litematic) = &self.litematic {
-            if let Some(raw_region) = litematic.raw_regions.get(&region_id) {
-                for tag in &raw_region.block_entities {
-                    if let Some(compound) = tag.as_compound() {
-                        let bx = compound.get("x").and_then(|t| match t {
-                            NbtTag::Int(v) => Some(*v),
-                            NbtTag::Short(v) => Some(*v as i32),
-                            _ => None,
-                        });
-                        let by = compound.get("y").and_then(|t| match t {
-                            NbtTag::Int(v) => Some(*v),
-                            NbtTag::Short(v) => Some(*v as i32),
-                            _ => None,
-                        });
-                        let bz = compound.get("z").and_then(|t| match t {
-                            NbtTag::Int(v) => Some(*v),
-                            NbtTag::Short(v) => Some(*v as i32),
-                            _ => None,
-                        });
-
-                        if (bx == Some(req.x) && by == Some(req.y) && bz == Some(req.z))
-                            || (bx == Some(world_pos[0])
-                                && by == Some(world_pos[1])
-                                && bz == Some(world_pos[2]))
-                        {
-                            block_entity_json = Some(nbt_to_json(tag));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        // Block entity data comes from the edited document, so moved or
+        // edited block entities are inspected where they now are.
+        let block_entity_json = doc.block_entity_at(&region_id, local_pos).map(|be| {
+            let mut compound = be.data.clone();
+            compound.insert("id".to_string(), NbtTag::String(be.kind.clone()));
+            nbt_to_json(&NbtTag::Compound(compound))
+        });
 
         Ok(Some(BlockInspection {
             region_id: req.region_id.clone(),
@@ -982,15 +973,8 @@ impl Session {
 
         for r in doc.regions() {
             let region_id = r.id();
-            let (be_count, ent_count) = if let Some(l) = litematic {
-                if let Some(raw) = l.raw_regions.get(region_id) {
-                    (raw.block_entities.len(), raw.entities.len())
-                } else {
-                    (0, 0)
-                }
-            } else {
-                (doc.block_entities().count(), doc.entities().count())
-            };
+            let be_count = doc.block_entities_in(region_id).count();
+            let ent_count = doc.entities_in(region_id).count();
             total_be += be_count;
             total_ent += ent_count;
 
@@ -1275,6 +1259,18 @@ impl Session {
             materials,
         })
     }
+}
+
+fn preview_be_count(ws: &EditWorkspace) -> usize {
+    ws.pending_preview()
+        .map(|p| p.block_entity_changes().count())
+        .unwrap_or(0)
+}
+
+fn preview_entity_count(ws: &EditWorkspace) -> usize {
+    ws.pending_preview()
+        .map(|p| p.entity_changes().count())
+        .unwrap_or(0)
 }
 
 pub fn nbt_to_json(tag: &NbtTag) -> serde_json::Value {

@@ -1,7 +1,7 @@
 use crate::{EditCommand, EditError, PatchError, PatchSet};
 use schematic_core::Document;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct History {
     undo: Vec<PatchSet>,
     redo: Vec<PatchSet>,

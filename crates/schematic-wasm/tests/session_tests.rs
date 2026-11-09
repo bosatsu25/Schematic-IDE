@@ -502,3 +502,53 @@ fn moved_chest_keeps_its_contents_through_export_and_reload() {
         .expect("block entity at new position");
     assert_eq!(be_json["id"], "minecraft:chest");
 }
+
+/// Issue #22: exporting must list everything the target format drops.
+#[test]
+fn export_report_lists_conversion_losses_before_export() {
+    let mut doc = Document::new(DocumentMetadata {
+        name: Some("Multi".into()),
+        description: Some("two regions".into()),
+        ..Default::default()
+    });
+    let stone = BlockState::new("minecraft:stone", []).unwrap();
+    for (name, origin) in [("A", Position::new(0, 0, 0)), ("B", Position::new(0, 0, 0))] {
+        let mut r = Region::new(RegionId::new(name), origin, Size::new(2, 1, 1));
+        let i = r.palette_mut().intern(stone.clone()).unwrap();
+        r.set_block_index(BlockPosition::new(0, 0, 0), Some(i)).unwrap();
+        doc.insert_region(r);
+    }
+    // Region B differs at (0,0,0) -> overlap conflict.
+    {
+        let r = doc.region_mut(&RegionId::new("B")).unwrap();
+        let dirt = r
+            .palette_mut()
+            .intern(BlockState::new("minecraft:dirt", []).unwrap())
+            .unwrap();
+        r.set_block_index(BlockPosition::new(0, 0, 0), Some(dirt)).unwrap();
+    }
+    let lit = LitematicDocument::from_document(doc, 3465);
+    let mut session = Session::new();
+    session
+        .load_schematic(&lit.export(&lit.document).unwrap())
+        .unwrap();
+
+    let same = session.export_report("litematic").unwrap();
+    assert!(same.losses.is_empty(), "same-format export is lossless");
+
+    let value = session
+        .command(br#"{"cmd":"export_report","args":{"target":"sponge"}}"#)
+        .unwrap();
+    let codes: Vec<&str> = value["losses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["code"].as_str().unwrap())
+        .collect();
+    assert!(codes.contains(&"REGIONS_MERGED"), "{codes:?}");
+    assert!(codes.contains(&"REGION_OVERLAP"), "{codes:?}");
+    assert!(codes.contains(&"METADATA_DROPPED"), "{codes:?}");
+    assert_eq!(value["blocked"], false);
+
+    assert!(session.command(br#"{"cmd":"nope"}"#).is_err());
+}

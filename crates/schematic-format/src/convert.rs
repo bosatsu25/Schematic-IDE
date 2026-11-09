@@ -140,3 +140,229 @@ pub fn merge_regions(doc: &Document) -> Result<MergedDocument, FormatError> {
         overlap_conflicts,
     })
 }
+
+/// Export targets understood by [`conversion_report`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExportTarget {
+    Litematic,
+    Sponge,
+    Structure,
+}
+
+impl ExportTarget {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "litematic" => Some(Self::Litematic),
+            "sponge" | "schem" => Some(Self::Sponge),
+            "structure" | "nbt" => Some(Self::Structure),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Litematic => ".litematic",
+            Self::Sponge => "Sponge .schem",
+            Self::Structure => "Structure .nbt",
+        }
+    }
+
+    fn matches(self, source: crate::SchematicFormatType) -> bool {
+        matches!(
+            (self, source),
+            (Self::Litematic, crate::SchematicFormatType::Litematic)
+                | (Self::Sponge, crate::SchematicFormatType::SpongeSchematic)
+                | (Self::Structure, crate::SchematicFormatType::StructureNbt)
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LossSeverity {
+    /// Export is refused.
+    Error,
+    /// Data visible in the game or the editor is lost or altered.
+    Warning,
+    /// Format bookkeeping is lost; the build itself is intact.
+    Info,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConversionLoss {
+    pub code: String,
+    pub severity: LossSeverity,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConversionReport {
+    pub target: ExportTarget,
+    pub losses: Vec<ConversionLoss>,
+}
+
+impl ConversionReport {
+    pub fn is_lossless(&self) -> bool {
+        self.losses.is_empty()
+    }
+
+    pub fn is_blocked(&self) -> bool {
+        self.losses
+            .iter()
+            .any(|l| l.severity == LossSeverity::Error)
+    }
+}
+
+/// What the loaded source file carried beyond the core document.
+#[derive(Clone, Debug, Default)]
+pub struct SourceExtras {
+    pub format: Option<crate::SchematicFormatType>,
+    /// Format-specific tags only the source format can store (unknown root
+    /// keys, litematic metadata extras, per-region unknown tags, ...).
+    pub format_specific_keys: Vec<String>,
+    /// Litematic pending block/fluid ticks.
+    pub pending_tick_count: usize,
+}
+
+/// Lists everything exporting `doc` to `target` cannot represent, so the UI
+/// can ask before any data is dropped (no silent data loss).
+pub fn conversion_report(
+    doc: &Document,
+    source: &SourceExtras,
+    target: ExportTarget,
+) -> Result<ConversionReport, FormatError> {
+    let mut losses = Vec::new();
+    let mut push = |code: &str, severity: LossSeverity, message: String| {
+        losses.push(ConversionLoss {
+            code: code.to_string(),
+            severity,
+            message,
+        });
+    };
+    let single_volume = matches!(target, ExportTarget::Sponge | ExportTarget::Structure);
+
+    if single_volume && doc.regions().count() > 1 {
+        let merged = merge_regions(doc)?;
+        push(
+            "REGIONS_MERGED",
+            LossSeverity::Warning,
+            format!(
+                "{} cannot hold multiple regions: {} will be merged into one volume and their names lost",
+                target.label(),
+                merged.merged_region_names.join(", ")
+            ),
+        );
+        if merged.overlap_conflicts > 0 {
+            push(
+                "REGION_OVERLAP",
+                LossSeverity::Warning,
+                format!(
+                    "{} block(s) where regions overlap with different blocks will be overwritten by the later region",
+                    merged.overlap_conflicts
+                ),
+            );
+        }
+        let region = merged.document.regions().next();
+        if let Some(region) = region {
+            check_dimensions(target, region.size(), &mut push);
+        }
+    } else if let Some(region) = doc.regions().next() {
+        if single_volume {
+            check_dimensions(target, region.size(), &mut push);
+        }
+    }
+
+    if target == ExportTarget::Structure {
+        if let Some(region) = doc.regions().next() {
+            let o = region.origin();
+            if doc.regions().count() == 1 && (o.x, o.y, o.z) != (0, 0, 0) {
+                push(
+                    "ORIGIN_DROPPED",
+                    LossSeverity::Info,
+                    format!(
+                        "Structure NBT has no origin; the placement offset ({}, {}, {}) is dropped",
+                        o.x, o.y, o.z
+                    ),
+                );
+            }
+        }
+    }
+
+    let meta = doc.metadata();
+    let has = |v: &Option<String>| v.as_deref().is_some_and(|s| !s.is_empty());
+    let mut dropped_meta = Vec::new();
+    match target {
+        ExportTarget::Litematic => {}
+        ExportTarget::Sponge => {
+            if has(&meta.description) {
+                dropped_meta.push("description");
+            }
+        }
+        ExportTarget::Structure => {
+            if has(&meta.name) {
+                dropped_meta.push("name");
+            }
+            if has(&meta.author) {
+                dropped_meta.push("author");
+            }
+            if has(&meta.description) {
+                dropped_meta.push("description");
+            }
+        }
+    }
+    if !dropped_meta.is_empty() {
+        push(
+            "METADATA_DROPPED",
+            LossSeverity::Info,
+            format!(
+                "{} has no field for: {}",
+                target.label(),
+                dropped_meta.join(", ")
+            ),
+        );
+    }
+
+    if target != ExportTarget::Litematic && source.pending_tick_count > 0 {
+        push(
+            "PENDING_TICKS_DROPPED",
+            LossSeverity::Warning,
+            format!(
+                "{} scheduled block/fluid tick(s) cannot be stored in {} and will be dropped",
+                source.pending_tick_count,
+                target.label()
+            ),
+        );
+    }
+
+    if let Some(format) = source.format {
+        if !target.matches(format) && !source.format_specific_keys.is_empty() {
+            push(
+                "FORMAT_SPECIFIC_TAGS_DROPPED",
+                LossSeverity::Info,
+                format!(
+                    "Source-format-only tags will not be carried over: {}",
+                    source.format_specific_keys.join(", ")
+                ),
+            );
+        }
+    }
+
+    Ok(ConversionReport { target, losses })
+}
+
+fn check_dimensions(
+    target: ExportTarget,
+    size: Size,
+    push: &mut impl FnMut(&str, LossSeverity, String),
+) {
+    let limit = crate::sponge::SPONGE_MAX_DIMENSION;
+    if target == ExportTarget::Sponge && (size.x > limit || size.y > limit || size.z > limit) {
+        push(
+            "DIMENSION_LIMIT",
+            LossSeverity::Error,
+            format!(
+                "Sponge schematics are limited to {limit} blocks per axis; this volume is {}x{}x{}",
+                size.x, size.y, size.z
+            ),
+        );
+    }
+}

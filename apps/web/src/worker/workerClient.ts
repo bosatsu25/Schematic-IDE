@@ -70,6 +70,11 @@ export class SchematicWorkerClient {
     };
   }
 
+  /** Generic engine command (see `SchematicEngine.command`). */
+  async command<T>(cmd: string, args: unknown = {}): Promise<T> {
+    return this.send({ type: 'COMMAND', cmd, args });
+  }
+
   async init(wasmUrl?: string): Promise<{ initialized: boolean }> {
     return this.send({ type: 'INIT', wasmUrl });
   }

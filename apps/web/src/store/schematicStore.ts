@@ -11,6 +11,7 @@ import {
   DocumentDiff,
   BlockDiff,
   AnalysisReport,
+  ExportReport,
 } from '../engine/schematicEngine';
 import { SchematicWorkerClient } from '../worker/workerClient';
 
@@ -38,6 +39,8 @@ export interface EditorState {
   diffMode: boolean;
   selectedDiff: BlockDiff | null;
   analysisReport: AnalysisReport | null;
+  /** Conversion-loss report awaiting the user's decision before export. */
+  pendingExport: { format: ExportFormat; report: ExportReport } | null;
 
   init: () => Promise<void>;
   loadFile: (file: File) => Promise<void>;
@@ -72,6 +75,10 @@ export interface EditorState {
   redo: () => Promise<void>;
   setExportFormat: (format: ExportFormat) => void;
   exportFile: (defaultFilename?: string, format?: ExportFormat) => Promise<Uint8Array | null>;
+  /** Checks what the export would drop; exports directly when lossless. */
+  requestExport: (format?: ExportFormat) => Promise<void>;
+  confirmExport: () => Promise<void>;
+  cancelExport: () => void;
   runAnalysis: (regionId?: string) => Promise<void>;
 }
 
@@ -105,6 +112,7 @@ export const useSchematicStore = create<EditorState>((set, get) => {
     diffMode: false,
     selectedDiff: null,
     analysisReport: null,
+    pendingExport: null,
 
     init: async () => {
       try {
@@ -678,6 +686,34 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           loading: false,
         });
       }
+    },
+
+    requestExport: async (format?: ExportFormat) => {
+      const activeFormat = format || get().exportFormat || 'litematic';
+      set({ error: null });
+      try {
+        const report = await client.command<ExportReport>('export_report', {
+          target: activeFormat,
+        });
+        if (report.losses.length === 0) {
+          await get().exportFile(undefined, activeFormat);
+        } else {
+          set({ pendingExport: { format: activeFormat, report } });
+        }
+      } catch (err: unknown) {
+        set({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+
+    confirmExport: async () => {
+      const pending = get().pendingExport;
+      if (!pending || pending.report.blocked) return;
+      set({ pendingExport: null });
+      await get().exportFile(undefined, pending.format);
+    },
+
+    cancelExport: () => {
+      set({ pendingExport: null });
     },
 
     exportFile: async (defaultFilename?: string, format?: ExportFormat) => {

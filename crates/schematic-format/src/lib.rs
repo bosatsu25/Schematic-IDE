@@ -5,7 +5,10 @@ pub mod nbt;
 pub mod sponge;
 pub mod structure;
 
-pub use convert::{merge_regions, MergedDocument};
+pub use convert::{
+    conversion_report, merge_regions, ConversionLoss, ConversionReport, ExportTarget, LossSeverity,
+    MergedDocument, SourceExtras,
+};
 pub use litematic::{FormatError, LitematicDocument, RawRegionData};
 pub use nbt::{decode_gzip_or_raw, encode_gzip, read_nbt, write_nbt, NbtError, NbtTag};
 pub use sponge::SpongeSchematic;

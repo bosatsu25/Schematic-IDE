@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { useSchematicStore, ExportFormat } from '../store/schematicStore';
+import { ExportLossDialog } from './ExportLossDialog';
 
 export const Header: React.FC = () => {
   const {
@@ -7,7 +8,7 @@ export const Header: React.FC = () => {
     status,
     undo,
     redo,
-    exportFile,
+    requestExport,
     loadFile,
     loading,
     exportFormat,
@@ -106,12 +107,13 @@ export const Header: React.FC = () => {
         <button
           className="btn btn-success"
           data-testid="export-btn"
-          onClick={() => exportFile()}
+          onClick={() => requestExport()}
           disabled={!document || loading}
         >
           {getExportLabel()}
         </button>
       </div>
+      <ExportLossDialog />
     </header>
   );
 };

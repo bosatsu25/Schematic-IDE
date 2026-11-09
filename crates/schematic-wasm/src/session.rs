@@ -10,8 +10,8 @@ use schematic_edit::{
     MoveCommand, PasteCommand, ReplaceCommand, RotateCommand, RotationAngle,
 };
 use schematic_format::{
-    detect_format, LitematicDocument, NbtTag, SchematicFormatType, SpongeSchematic,
-    StructureDocument,
+    conversion_report, detect_format, ExportTarget, LitematicDocument, LossSeverity, NbtTag,
+    SchematicFormatType, SourceExtras, SpongeSchematic, StructureDocument,
 };
 use schematic_validate::validate_document as core_validate_document;
 pub use schematic_validate::{Diagnostic, DiagnosticSeverity, Fixability};
@@ -221,6 +221,21 @@ pub struct AnalysisReport {
     pub region_id: Option<String>,
     pub statistics: StructureStatistics,
     pub materials: Vec<MaterialItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportLoss {
+    pub code: String,
+    /// `error` (export refused), `warning` (visible data lost), `info`.
+    pub severity: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportReport {
+    pub target: String,
+    pub blocked: bool,
+    pub losses: Vec<ExportLoss>,
 }
 
 pub struct Session {
@@ -875,6 +890,129 @@ impl Session {
         } else {
             let default_template = StructureDocument::from_document(doc.clone(), 2975);
             default_template.export(doc).map_err(|e| e.to_string())
+        }
+    }
+
+    /// Format-specific information the loaded file carried beyond the core
+    /// document (used to report what a cross-format export drops).
+    fn source_extras(&self) -> SourceExtras {
+        if let Some(l) = &self.litematic {
+            let mut keys: Vec<String> = l.raw_root_unknown.keys().cloned().collect();
+            keys.extend(
+                l.raw_metadata
+                    .keys()
+                    .filter(|k| {
+                        !matches!(
+                            k.as_str(),
+                            "Name"
+                                | "Author"
+                                | "Description"
+                                | "TimeCreated"
+                                | "TimeModified"
+                                | "TotalVolume"
+                                | "TotalBlocks"
+                                | "EnclosingSize"
+                                | "RegionCount"
+                        )
+                    })
+                    .map(|k| format!("Metadata.{k}")),
+            );
+            let mut ticks = 0;
+            for (id, raw) in &l.raw_regions {
+                ticks += raw.pending_block_ticks.as_ref().map_or(0, Vec::len);
+                ticks += raw.pending_fluid_ticks.as_ref().map_or(0, Vec::len);
+                keys.extend(
+                    raw.unknown_tags
+                        .keys()
+                        .map(|k| format!("Regions.{}.{k}", id.as_str())),
+                );
+            }
+            keys.sort();
+            keys.dedup();
+            SourceExtras {
+                format: Some(SchematicFormatType::Litematic),
+                format_specific_keys: keys,
+                pending_tick_count: ticks,
+            }
+        } else if let Some(s) = &self.sponge {
+            let mut keys: Vec<String> = s
+                .raw_root_unknown
+                .keys()
+                .filter(|k| k.as_str() != "Metadata")
+                .cloned()
+                .collect();
+            keys.sort();
+            SourceExtras {
+                format: Some(SchematicFormatType::SpongeSchematic),
+                format_specific_keys: keys,
+                pending_tick_count: 0,
+            }
+        } else if let Some(st) = &self.structure {
+            let mut keys: Vec<String> = st.raw_root_unknown.keys().cloned().collect();
+            keys.sort();
+            SourceExtras {
+                format: Some(SchematicFormatType::StructureNbt),
+                format_specific_keys: keys,
+                pending_tick_count: 0,
+            }
+        } else {
+            SourceExtras::default()
+        }
+    }
+
+    /// Reports what exporting the committed document to `target`
+    /// (`litematic` / `sponge` / `structure`) cannot represent.
+    pub fn export_report(&self, target: &str) -> Result<ExportReport, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let target_kind = ExportTarget::parse(target)
+            .ok_or_else(|| format!("Unknown export target '{target}'"))?;
+        let report = conversion_report(ws.committed(), &self.source_extras(), target_kind)
+            .map_err(|e| e.to_string())?;
+        Ok(ExportReport {
+            target: target.to_string(),
+            blocked: report.is_blocked(),
+            losses: report
+                .losses
+                .into_iter()
+                .map(|l| ExportLoss {
+                    code: l.code,
+                    severity: match l.severity {
+                        LossSeverity::Error => "error",
+                        LossSeverity::Warning => "warning",
+                        LossSeverity::Info => "info",
+                    }
+                    .to_string(),
+                    message: l.message,
+                })
+                .collect(),
+        })
+    }
+
+    /// Generic JSON command channel: `{"cmd": "...", "args": {...}}`.
+    /// New engine features are exposed here instead of growing the C-ABI.
+    pub fn command(&mut self, request: &[u8]) -> Result<serde_json::Value, String> {
+        #[derive(Deserialize)]
+        struct Request {
+            cmd: String,
+            #[serde(default)]
+            args: serde_json::Value,
+        }
+        let req: Request =
+            serde_json::from_slice(request).map_err(|e| format!("Invalid command: {e}"))?;
+        let to_json = |v: Result<_, String>| -> Result<serde_json::Value, String> {
+            v.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+        };
+        match req.cmd.as_str() {
+            "export_report" => {
+                let target = req
+                    .args
+                    .get("target")
+                    .and_then(|t| t.as_str())
+                    .ok_or("export_report requires args.target")?
+                    .to_string();
+                to_json(self.export_report(&target))
+            }
+            other => Err(format!("Unknown command '{other}'")),
         }
     }
 

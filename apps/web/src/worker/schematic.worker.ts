@@ -39,7 +39,8 @@ export type WorkerMessage =
   | { id: string; type: 'VALIDATE_DOCUMENT' }
   | { id: string; type: 'DIFF_WITH_SOURCE' }
   | { id: string; type: 'DIFF_WITH_LITEMATIC'; buffer: ArrayBuffer }
-  | { id: string; type: 'ANALYZE_DOCUMENT'; regionId?: string };
+  | { id: string; type: 'ANALYZE_DOCUMENT'; regionId?: string }
+  | { id: string; type: 'COMMAND'; cmd: string; args?: unknown };
 
 export interface WorkerResponse {
   id: string;
@@ -193,6 +194,11 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       }
       case 'ANALYZE_DOCUMENT': {
         const res = engine.analyze(msg.regionId);
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'COMMAND': {
+        const res = engine.command(msg.cmd, msg.args ?? {});
         self.postMessage({ id: msg.id, ok: true, data: res });
         break;
       }

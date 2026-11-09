@@ -221,8 +221,24 @@ export interface AnalysisReport {
   materials: MaterialItem[];
 }
 
+export type LossSeverity = 'error' | 'warning' | 'info';
+
+export interface ExportLoss {
+  code: string;
+  severity: LossSeverity;
+  message: string;
+}
+
+export interface ExportReport {
+  target: string;
+  /** True when at least one loss is an `error`: the export is refused. */
+  blocked: boolean;
+  losses: ExportLoss[];
+}
+
 interface WasmExports {
   memory: WebAssembly.Memory;
+  schematic_command(ptr: number, len: number): number;
   wasm_alloc(size: number): number;
   wasm_dealloc(ptr: number, size: number): void;
   wasm_get_response_ptr(): number;
@@ -461,6 +477,15 @@ export class SchematicEngine {
       const code = this.exports.schematic_analyze_document(0, 0);
       return this.handleJsonResponse<AnalysisReport>(code);
     }
+  }
+
+  /** Generic JSON command channel (`Session::command` on the Rust side). */
+  command<T>(cmd: string, args: unknown = {}): T {
+    const bytes = this.textEncoder.encode(JSON.stringify({ cmd, args }));
+    const code = this.callWithBytes(bytes, (ptr, len) =>
+      this.exports.schematic_command(ptr, len),
+    );
+    return this.handleJsonResponse<T>(code);
   }
 
   private callWithBytes(

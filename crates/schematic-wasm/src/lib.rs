@@ -6,10 +6,10 @@ pub use schematic_diff::{
 pub use session::{
     AnalysisReport, BlockInspection, BlockInspectionRequest, CleanupRequest, CopyRequest,
     Diagnostic, DiagnosticSeverity, DocumentInspection, DocumentMetadataInspection,
-    DocumentSummary, FillRequest, Fixability, HistorySummary, MaterialItem, MirrorRequest,
-    MoveRequest, PasteRequest, PreviewDiff, PreviewSummary, RegionInspectionSummary,
-    RegionMeshData, RegionSummary, ReplaceRequest, RotateRequest, SelectionBounds, Session,
-    SessionStatus, StructureStatistics,
+    DocumentSummary, ExportLoss, ExportReport, FillRequest, Fixability, HistorySummary,
+    MaterialItem, MirrorRequest, MoveRequest, PasteRequest, PreviewDiff, PreviewSummary,
+    RegionInspectionSummary, RegionMeshData, RegionSummary, ReplaceRequest, RotateRequest,
+    SelectionBounds, Session, SessionStatus, StructureStatistics,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -64,6 +64,25 @@ mod wasm_exports {
             match session.load_litematic(bytes) {
                 Ok(summary) => {
                     session.set_json_response(&summary);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    /// Generic JSON command channel (see `Session::command`).
+    #[no_mangle]
+    pub extern "C" fn schematic_command(ptr: *const u8, len: usize) -> i32 {
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            match session.command(bytes) {
+                Ok(value) => {
+                    session.set_json_response(&value);
                     0
                 }
                 Err(e) => {

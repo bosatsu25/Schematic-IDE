@@ -9,6 +9,7 @@
     "packages/*"
   ],
   "scripts": {
+    "build:wasm": "node scripts/build-wasm.mjs",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

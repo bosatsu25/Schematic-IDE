@@ -4,12 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "build:wasm": "node ../../scripts/build-wasm.mjs",
+    "dev": "pnpm build:wasm && vite",
+    "build": "pnpm build:wasm && vite build",
+    "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test": "pnpm build:wasm && vitest run",
+    "test:e2e": "pnpm build:wasm && playwright test"
   },
   "dependencies": {
     "@schematic-ide/renderer": "workspace:^",

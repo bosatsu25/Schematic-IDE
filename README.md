@@ -30,6 +30,23 @@ A local-first, browser-based IDE for Minecraft structures.
 - `docs/` — requirements, architecture, ADRs, roadmap, gap analysis, and migrations
 - `tests/` — fixtures and verification suites
 
+## Building and running
+
+Prerequisites: Node 20+, pnpm 9, and Rust stable with the WASM target
+(`rustup target add wasm32-unknown-unknown`).
+
+```sh
+pnpm install
+pnpm build:wasm   # cargo build -p schematic-wasm --target wasm32-unknown-unknown --release
+pnpm --filter @schematic-ide/web dev
+```
+
+The WASM module (`apps/web/public/schematic_wasm.wasm`) is a build output and is
+not committed. `scripts/build-wasm.mjs` builds it from `crates/schematic-wasm` and
+copies it into `apps/web/public/`. The web app's `dev`, `build`, `test`, and
+`test:e2e` scripts run it automatically first; cargo's incremental build makes
+repeat runs cheap. See [docs/development-loop.md](./docs/development-loop.md).
+
 ## Design principles
 
 - Single source of truth in the Rust core

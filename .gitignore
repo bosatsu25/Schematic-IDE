@@ -35,3 +35,6 @@ playwright-report/
 
 # Editor
 .vscode/
+
+# Generated WASM (built from crates/schematic-wasm by `pnpm build:wasm`)
+apps/web/public/schematic_wasm.wasm

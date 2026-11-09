@@ -9,9 +9,11 @@ export default defineConfig({
     channel: process.platform === 'win32' ? 'chrome' : undefined,
   },
   webServer: {
-    command: 'pnpm dev --port 5173',
+    // `pnpm dev` rebuilds the WASM module first (no-op when already fresh);
+    // the generous timeout covers a cold cargo build.
+    command: 'pnpm dev --port 5173 --strictPort',
     port: 5173,
     reuseExistingServer: true,
-    timeout: 15000,
+    timeout: 180000,
   },
 });

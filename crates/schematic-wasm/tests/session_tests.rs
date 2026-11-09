@@ -515,7 +515,8 @@ fn export_report_lists_conversion_losses_before_export() {
     for (name, origin) in [("A", Position::new(0, 0, 0)), ("B", Position::new(0, 0, 0))] {
         let mut r = Region::new(RegionId::new(name), origin, Size::new(2, 1, 1));
         let i = r.palette_mut().intern(stone.clone()).unwrap();
-        r.set_block_index(BlockPosition::new(0, 0, 0), Some(i)).unwrap();
+        r.set_block_index(BlockPosition::new(0, 0, 0), Some(i))
+            .unwrap();
         doc.insert_region(r);
     }
     // Region B differs at (0,0,0) -> overlap conflict.
@@ -525,7 +526,8 @@ fn export_report_lists_conversion_losses_before_export() {
             .palette_mut()
             .intern(BlockState::new("minecraft:dirt", []).unwrap())
             .unwrap();
-        r.set_block_index(BlockPosition::new(0, 0, 0), Some(dirt)).unwrap();
+        r.set_block_index(BlockPosition::new(0, 0, 0), Some(dirt))
+            .unwrap();
     }
     let lit = LitematicDocument::from_document(doc, 3465);
     let mut session = Session::new();

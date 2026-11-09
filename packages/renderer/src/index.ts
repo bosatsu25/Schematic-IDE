@@ -8,9 +8,18 @@ import {
   decodeFaceStream,
   paletteColors,
   packFace,
+  unpackFace,
 } from './chunkGeometry';
 
-export { getBlockColor, decodeFaceStream, buildChunkGeometry, buildCellOutlines, chunkKey, packFace };
+export {
+  getBlockColor,
+  decodeFaceStream,
+  buildChunkGeometry,
+  buildCellOutlines,
+  chunkKey,
+  packFace,
+  unpackFace,
+};
 export type { ChunkFaces } from './chunkGeometry';
 
 type Vec3 = [number, number, number];
@@ -64,7 +73,7 @@ const MAX_OUTLINED_CELLS = 20000;
 
 interface RegionEntry {
   view: RegionViewData;
-  colors: Float32Array;
+  colors: Uint8Array;
   group: THREE.Group;
   chunks: Map<string, THREE.Mesh>;
   boundary: THREE.LineSegments;
@@ -204,9 +213,16 @@ export class VoxelRenderer {
       }
       if (chunkFaces.length === 0) continue;
       const mesh = new THREE.Mesh(
-        buildChunkGeometry(chunkFaces, view.origin, entry.colors),
+        buildChunkGeometry(chunkFaces, entry.colors, { releaseColors: !!this.renderer }),
         entry.style.dimmed ? this.dimmedMaterial : this.solidMaterial,
       );
+      mesh.position.set(
+        view.origin[0] + chunk[0] * 16,
+        view.origin[1] + chunk[1] * 16,
+        view.origin[2] + chunk[2] * 16,
+      );
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
       mesh.userData = { regionId: view.region_id, chunk: key };
       entry.chunks.set(key, mesh);
       entry.group.add(mesh);
@@ -412,6 +428,7 @@ export class VoxelRenderer {
    * nearest visible block face hit, or null.
    */
   pick(ndcX: number, ndcY: number): PickHit | null {
+    this.scene.updateMatrixWorld();
     this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
     const targets: THREE.Object3D[] = [];
     for (const entry of this.regions.values()) {

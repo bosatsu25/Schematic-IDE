@@ -324,12 +324,14 @@ function appInstrumentation() {
   };
   const proto = window.WebGL2RenderingContext && window.WebGL2RenderingContext.prototype;
   if (proto) {
-    for (const name of ['drawElementsInstanced', 'drawArraysInstanced']) {
+    // Chunk meshes are indexed (drawElements); the legacy renderer used
+    // instanced draws. Overlay lines use drawArrays and are not counted.
+    for (const name of ['drawElements', 'drawElementsInstanced', 'drawArraysInstanced']) {
       const orig = proto[name];
       proto[name] = function (...a) {
         if (B.changeAt !== null) {
           B.drawCalls++;
-          B.instancesDrawn += a[a.length - 1];
+          B.instancesDrawn += name === 'drawElements' ? 1 : a[a.length - 1];
           if (B.firstDrawAt === null) {
             B.firstDrawAt = performance.now();
             requestAnimationFrame(() => {

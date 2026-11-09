@@ -6,6 +6,7 @@ import {
   decodeFaceStream,
   buildChunkGeometry,
   packFace,
+  unpackFace,
   RegionViewData,
 } from './index';
 
@@ -14,7 +15,7 @@ function encode(chunks: { chunk: [number, number, number]; faces: number[][] }[]
   const ints: number[] = [chunks.length];
   for (const c of chunks) {
     ints.push(...c.chunk, c.faces.length);
-    for (const [x, y, z, attr] of c.faces) ints.push(packFace(x, y, z, attr & 7, attr >> 3));
+    for (const [x, y, z, attr] of c.faces) ints.push(packFace(x, y, z, attr & 7, attr >> 3) | 0);
   }
   return new Int32Array(ints).buffer;
 }
@@ -50,14 +51,17 @@ describe('face stream', () => {
     );
     expect(decoded).toHaveLength(2);
     expect(decoded[0].chunk).toEqual([0, 0, 0]);
-    expect(Array.from(decoded[0].faces)).toEqual(face(1, 2, 3, 70000, 4));
+    expect(unpackFace(decoded[0].faces[0])).toEqual({ x: 1, y: 2, z: 3, dir: 4, palette: 70000 });
     expect(decoded[1].faces.length).toBe(0);
   });
 
-  it('builds 4 vertices / 2 triangles per face at world position with outward normals', () => {
-    const colors = new Float32Array([1, 1, 1]);
-    const geom = buildChunkGeometry(new Int32Array(face(0, 0, 0, 0, 2)), [5, 6, 7], colors);
+  it('builds 4 vertices / 2 triangles per face in compact chunk-local attributes', () => {
+    const colors = new Uint8Array([255, 255, 255]);
+    const geom = buildChunkGeometry(new Uint32Array([packFace(5, 6, 7, 2, 0)]), colors);
     expect(geom.getAttribute('position').count).toBe(4);
+    expect(geom.getAttribute('position').array).toBeInstanceOf(Uint8Array);
+    expect(geom.getAttribute('color').array).toBeInstanceOf(Uint8Array);
+    expect(geom.getAttribute('normal')).toBeUndefined();
     expect(geom.getIndex()!.count).toBe(6);
     const pos = geom.getAttribute('position');
     for (let i = 0; i < 4; i++) expect(pos.getY(i)).toBe(7); // top face of block y=6

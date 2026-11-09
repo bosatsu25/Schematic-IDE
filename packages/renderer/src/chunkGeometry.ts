@@ -4,19 +4,46 @@ import { getBlockColor } from '@schematic-ide/minecraft-data';
 /** Faces of one 16³ storage chunk, as produced by the engine. */
 export interface ChunkFaces {
   chunk: [number, number, number];
-  /** `[x, y, z, (paletteIndex << 3) | direction]` per face, region-local. */
-  faces: Int32Array;
+  /**
+   * One packed `u32` per face: in-chunk offset x (bits 0–3), y (4–7),
+   * z (8–11), direction (12–14) and palette index (15–31). A view into the
+   * transferred buffer; no copy is made.
+   */
+  faces: Uint32Array;
+}
+
+export interface UnpackedFace {
+  /** Offset inside the chunk (0–15). */
+  x: number;
+  y: number;
+  z: number;
+  /** 0 +X, 1 −X, 2 +Y, 3 −Y, 4 +Z, 5 −Z. */
+  dir: number;
+  palette: number;
+}
+
+export function unpackFace(v: number): UnpackedFace {
+  return {
+    x: v & 15,
+    y: (v >>> 4) & 15,
+    z: (v >>> 8) & 15,
+    dir: (v >>> 12) & 7,
+    palette: v >>> 15,
+  };
+}
+
+/** Packs a face the way the engine does (tests and tools). */
+export function packFace(x: number, y: number, z: number, dir: number, palette: number): number {
+  return ((x & 15) | ((y & 15) << 4) | ((z & 15) << 8) | (dir << 12) | (palette << 15)) >>> 0;
 }
 
 /**
  * Decodes the engine's binary face stream: `[chunkCount]`, then per chunk
- * `[cx, cy, cz, faceCount, ...faceCount packed u32]` where each face packs
- * the in-chunk offset (x bits 0–3, y 4–7, z 8–11), direction (12–14) and
- * palette index (15–31). Faces are expanded to region-local
- * `[x, y, z, (palette << 3) | dir]` for geometry building.
+ * `[cx, cy, cz, faceCount, ...faceCount packed u32]`.
  */
 export function decodeFaceStream(buffer: ArrayBuffer): ChunkFaces[] {
   const ints = new Int32Array(buffer);
+  const words = new Uint32Array(buffer);
   const out: ChunkFaces[] = [];
   if (ints.length === 0) return out;
   let i = 1;
@@ -24,26 +51,10 @@ export function decodeFaceStream(buffer: ArrayBuffer): ChunkFaces[] {
     const chunk: [number, number, number] = [ints[i], ints[i + 1], ints[i + 2]];
     const n = ints[i + 3];
     i += 4;
-    const faces = new Int32Array(n * 4);
-    const bx = chunk[0] * 16;
-    const by = chunk[1] * 16;
-    const bz = chunk[2] * 16;
-    for (let f = 0; f < n; f++) {
-      const v = ints[i + f] >>> 0;
-      faces[f * 4] = bx + (v & 15);
-      faces[f * 4 + 1] = by + ((v >>> 4) & 15);
-      faces[f * 4 + 2] = bz + ((v >>> 8) & 15);
-      faces[f * 4 + 3] = ((v >>> 15) << 3) | ((v >>> 12) & 7);
-    }
-    out.push({ chunk, faces });
+    out.push({ chunk, faces: words.subarray(i, i + n) });
     i += n;
   }
   return out;
-}
-
-/** Packs a face the way the engine does (used by tests and tools). */
-export function packFace(x: number, y: number, z: number, dir: number, palette: number): number {
-  return ((x & 15) | ((y & 15) << 4) | ((z & 15) << 8) | (dir << 12) | (palette << 15)) | 0;
 }
 
 export const chunkKey = (c: [number, number, number]) => `${c[0]},${c[1]},${c[2]}`;
@@ -58,66 +69,64 @@ const CORNERS: number[][][] = [
   [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]],
   [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]],
 ];
-const NORMALS = [
-  [1, 0, 0],
-  [-1, 0, 0],
-  [0, 1, 0],
-  [0, -1, 0],
-  [0, 0, 1],
-  [0, 0, -1],
-];
 /** Baked directional shading so faces read without dynamic lights. */
 const SHADE = [0.8, 0.8, 1.0, 0.5, 0.65, 0.65];
 
-/** Linear RGB triples per palette index. */
-export function paletteColors(palette: string[]): Float32Array {
-  const colors = new Float32Array(palette.length * 3);
+/** sRGB bytes per palette index. */
+export function paletteColors(palette: string[]): Uint8Array {
+  const colors = new Uint8Array(palette.length * 3);
   const c = new THREE.Color();
   palette.forEach((name, i) => {
     c.set(name ? getBlockColor(name) : '#ff00ff');
-    colors[i * 3] = c.r;
-    colors[i * 3 + 1] = c.g;
-    colors[i * 3 + 2] = c.b;
+    colors[i * 3] = Math.round(c.r * 255);
+    colors[i * 3 + 1] = Math.round(c.g * 255);
+    colors[i * 3 + 2] = Math.round(c.b * 255);
   });
   return colors;
 }
 
+/** Drops a CPU-side copy once three.js has uploaded it to the GPU. */
+function releaseAfterUpload(this: THREE.BufferAttribute): void {
+  (this as unknown as { array: ArrayLike<number> | null }).array = null;
+}
+
 /**
- * Builds one merged, indexed geometry for a chunk's visible faces, placed in
- * world space at `origin` + region-local block coordinates.
+ * Builds one merged, indexed geometry for a chunk's visible faces in
+ * chunk-local coordinates (0–16); place the mesh at the chunk's world corner.
+ *
+ * Memory per face: 12 B of `Uint8` positions and 12–24 B of indices are kept
+ * (needed for picking); 12 B of `Uint8` colors are released after upload.
+ * No normal attribute is stored: materials are unlit and picking derives
+ * face normals from the triangle.
  */
 export function buildChunkGeometry(
-  faces: Int32Array,
-  origin: [number, number, number],
-  colors: Float32Array,
+  faces: Uint32Array,
+  colors: Uint8Array,
+  options: { releaseColors?: boolean } = {},
 ): THREE.BufferGeometry {
-  const count = faces.length / 4;
-  const positions = new Float32Array(count * 12);
-  const normals = new Float32Array(count * 12);
-  const vertexColors = new Float32Array(count * 12);
+  const count = faces.length;
+  const positions = new Uint8Array(count * 12);
+  const vertexColors = new Uint8Array(count * 12);
   const indices = count * 4 > 65535 ? new Uint32Array(count * 6) : new Uint16Array(count * 6);
 
   for (let f = 0; f < count; f++) {
-    const x = origin[0] + faces[f * 4];
-    const y = origin[1] + faces[f * 4 + 1];
-    const z = origin[2] + faces[f * 4 + 2];
-    const attr = faces[f * 4 + 3];
-    const dir = attr & 7;
-    const pal = attr >> 3;
-    const shade = SHADE[dir];
-    const r = (colors[pal * 3] ?? 1) * shade;
-    const g = (colors[pal * 3 + 1] ?? 0) * shade;
-    const b = (colors[pal * 3 + 2] ?? 1) * shade;
-    const n = NORMALS[dir];
-    for (let v = 0; v < 4; v++) {
-      const corner = CORNERS[dir][v];
-      const o = (f * 4 + v) * 3;
+    const v = faces[f];
+    const x = v & 15;
+    const y = (v >>> 4) & 15;
+    const z = (v >>> 8) & 15;
+    const dir = (v >>> 12) & 7;
+    const pal = v >>> 15;
+    const shade = SHADE[dir] ?? 1;
+    const r = Math.round((colors[pal * 3] ?? 255) * shade);
+    const g = Math.round((colors[pal * 3 + 1] ?? 0) * shade);
+    const b = Math.round((colors[pal * 3 + 2] ?? 255) * shade);
+    const corners = CORNERS[dir];
+    for (let k = 0; k < 4; k++) {
+      const corner = corners[k];
+      const o = (f * 4 + k) * 3;
       positions[o] = x + corner[0];
       positions[o + 1] = y + corner[1];
       positions[o + 2] = z + corner[2];
-      normals[o] = n[0];
-      normals[o + 1] = n[1];
-      normals[o + 2] = n[2];
       vertexColors[o] = r;
       vertexColors[o + 1] = g;
       vertexColors[o + 2] = b;
@@ -134,11 +143,12 @@ export function buildChunkGeometry(
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-  geometry.setAttribute('color', new THREE.BufferAttribute(vertexColors, 3));
+  const colorAttr = new THREE.BufferAttribute(vertexColors, 3, true);
+  if (options.releaseColors) colorAttr.onUpload(releaseAfterUpload);
+  geometry.setAttribute('color', colorAttr);
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-  geometry.computeBoundingSphere();
   geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
   return geometry;
 }
 

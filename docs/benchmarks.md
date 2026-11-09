@@ -31,6 +31,10 @@ real app UI.
 - **The JSON mesh is heavy.** The mesh is 6 / 33 / 69 MiB of JSON. Parsing,
   structured-cloning and per-block JS objects push the main-thread JS heap to
   87 / 344 / 782 MiB after the first render.
+- **The new binary face mesh (`region_faces`) culls about 41% of faces but
+  is 4-5x larger than the JSON.** It is 30 / 150 / 299 MiB at 16 bytes per
+  face. The stream needs tighter packing before it scales; see the face-mesh
+  section.
 - **10M does load in the browser**, but slowly. In app mode the tab's
   renderer process peaked at 4.3 GB of RSS, and the app became idle 145 s
   after the file was opened, on software GL.
@@ -85,7 +89,8 @@ pnpm --filter @schematic-ide/web bench:browser -- --scales 1m,5m,10m
      blocking) and main-thread long tasks. App code is not modified.
 5. Prints a summary and writes JSON to `target/bench-results/`.
 
-Options: `--modes engine,app`, `--no-render`, `--skip-build`, and
+Options: `--modes engine,app`, `--no-render`, `--skip-build`,
+`--wasm <file>` (benchmark a prebuilt `.wasm` instead of building one), and
 `--timeout <sec>` (per scale and mode, default 600). The harness is not part of
 CI or the default `test:e2e` run. It needs the `wasm32-unknown-unknown` target
 and the Playwright Chromium already used by `test:e2e`.
@@ -186,6 +191,53 @@ The `INSPECT_DOCUMENT` round trip looked like 9-90 s. The worker's actual
 work there takes milliseconds (see the native table). The reply simply waits
 while the main thread is blocked by the first frame.
 
+## Results: binary face mesh (`region_faces`)
+
+The renderer is moving from the JSON `get_region_mesh` block array to
+`Session::region_view` plus `Session::region_faces`, a face-culled binary
+stream. The stream is little-endian `i32`:
+`[chunk_count, per chunk: cx, cy, cz, n, then n × (x, y, z, (palette << 3) | dir)]`.
+
+These numbers were measured on the same fixtures with a snapshot of `main`'s
+in-progress sources, taken 2026-11-09 before that API was committed. Native
+numbers come from the ported `scale_benchmarks.rs`. The WASM numbers come from
+the engine page, which calls `schematic_region_faces` whenever the build
+exports it. Every other native stage in that run was within ±10% of the
+tables above.
+
+| | 1M | 5M | 10M |
+|---|---:|---:|---:|
+| Faces emitted | 1,967,511 | 9,802,477 | 19,594,522 |
+| Faces per occupied block (6 = no culling) | 3.57 | 3.56 | 3.56 |
+| Chunks | 343 | 1,352 | 2,560 |
+| Stream size | **30.0 MiB** | **149.6 MiB** | **299.0 MiB** |
+| …compared with the JSON mesh | 5.0x | 4.5x | 4.3x |
+| Native `region_faces` | 192 ms | 980 ms | 2,117 ms |
+| Native `region_view` | <0.1 ms | <0.1 ms | 0.1 ms |
+| Native peak RSS during `region_faces` | 134 MiB | 706 MiB | 1,005 MiB |
+| WASM `schematic_region_faces` | 221 ms | 1,260 ms | 2,648 ms |
+| Copy out of wasm memory (`ArrayBuffer.slice`) | 17 ms | 89 ms | 191 ms |
+| wasm linear memory afterwards (was 86 / 339 / 662 MiB after the JSON mesh) | 159 MiB | 742 MiB | 1,442 MiB |
+
+What this shows:
+
+- Face culling removes about 41% of faces on this fixture. Instead of 6
+  faces per block there are 3.56, so 10M drops from about 66M triangles to
+  about 39M. Builds with solid interiors would cull far more. The random 55%
+  fill, plus non-full blocks such as glass, stairs, slabs and lanterns, is a
+  pessimistic case.
+- No JSON encode or decode is needed. Wasm-side cost is similar to
+  `get_region_mesh` plus JSON serialization, and copying out of wasm memory
+  is cheap (17-191 ms).
+- **The stream is 4-5x larger than the JSON mesh** (16 bytes per face,
+  3.56 faces per block, so about 57 bytes per block versus about 13 bytes of
+  JSON). At 10M it is 299 MiB per full rebuild, and the wasm heap grows to
+  1.4 GiB (wasm memory never shrinks). The fields fit in far fewer bits:
+  chunk-local `x`, `y` and `z` need 4 bits each, `dir` 3 bits and the palette
+  index ≤16 bits. That is one `u32` per face, a 4x reduction. A per-block
+  6-bit visible-face mask would shrink it further. Streaming the result per
+  chunk, rather than as one region-sized buffer, would also cap the peak.
+
 ## Findings and bottlenecks
 
 1. **Per-block cube instancing does not scale.** `VoxelRenderer.renderRegion`
@@ -195,10 +247,11 @@ while the main thread is blocked by the first frame.
    and the main thread is blocked for the whole frame (the longest long task
    roughly equals the frame time). Hardware GPUs will be much faster but were
    not measured here. Even so, 66M triangles per frame for a 10M structure
-   is far more than an interactive viewport should need. Chunked, face-culled
-   meshes would cut the geometry substantially: dense builds hide most
-   interior faces, and even this random 55% fill hides about half. Uploading
-   only dirty chunks would also stop full re-uploads after each edit.
+   is far more than an interactive viewport should need. The chunked,
+   face-culled `region_faces` path (see the section above) removes about 41%
+   of faces even on this pessimistic fixture. Uploading only dirty chunks
+   would also stop full re-uploads after each edit. Its encoding still needs
+   to shrink.
 2. **Load-time analysis is the slowest CPU stage.** `Session::analyze` runs
    on every load and after every region switch. Most of its time goes to
    `SurfaceAnalyzer`, which collects every occupied block into a

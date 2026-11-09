@@ -25,6 +25,7 @@
  *   --no-render         engine mode: skip the WebGL render step
  *   --skip-build        reuse the existing wasm / vite build / fixtures
  *   --timeout <sec>     per scale and mode (default: 600)
+ *   --wasm <file>       use this prebuilt .wasm instead of building one
  *   --out <file>        JSON output path
  *
  * Not part of CI. Requires the wasm32-unknown-unknown target and a Playwright
@@ -44,7 +45,7 @@ const repoRoot = path.resolve(appDir, '../..');
 const targetDir = path.join(repoRoot, 'target');
 const fixtureDir = path.join(targetDir, 'bench-fixtures');
 const webOutDir = path.join(targetDir, 'bench-web');
-const wasmPath = path.join(
+const defaultWasmPath = path.join(
   targetDir,
   'wasm32-unknown-unknown',
   'release',
@@ -62,6 +63,7 @@ function parseArgs(argv) {
     modes: ['engine', 'app'],
     render: true,
     skipBuild: false,
+    wasm: null,
     timeoutSec: 600,
     out: null,
   };
@@ -72,6 +74,7 @@ function parseArgs(argv) {
     else if (a === '--modes') opts.modes = argv[++i].split(',').map((s) => s.trim());
     else if (a === '--no-render') opts.render = false;
     else if (a === '--skip-build') opts.skipBuild = true;
+    else if (a === '--wasm') opts.wasm = path.resolve(argv[++i]);
     else if (a === '--timeout') opts.timeoutSec = Number(argv[++i]);
     else if (a === '--out') opts.out = path.resolve(argv[++i]);
     else if (a === '--help' || a === '-h') {
@@ -494,7 +497,8 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   fs.mkdirSync(fixtureDir, { recursive: true });
 
-  if (!opts.skipBuild || !fs.existsSync(wasmPath)) {
+  const wasmPath = opts.wasm ?? defaultWasmPath;
+  if (!opts.wasm && (!opts.skipBuild || !fs.existsSync(wasmPath))) {
     console.log('> building release wasm');
     run('cargo', ['build', '-p', 'schematic-wasm', '--target', 'wasm32-unknown-unknown', '--release']);
   }

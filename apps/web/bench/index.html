@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Schematic IDE engine benchmark</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #111;
+        color: #ddd;
+        font: 13px/1.4 monospace;
+      }
+      #bench-canvas {
+        display: block;
+        width: 1280px;
+        height: 720px;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      Benchmark-only page (not part of the production build). Driven by
+      apps/web/scripts/bench-browser.mjs; see docs/benchmarks.md.
+    -->
+    <canvas id="bench-canvas"></canvas>
+    <pre id="bench-log"></pre>
+    <script type="module" src="./bench.ts"></script>
+  </body>
+</html>

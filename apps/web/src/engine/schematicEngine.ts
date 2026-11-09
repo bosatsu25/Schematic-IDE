@@ -29,6 +29,41 @@ export interface RegionMeshData {
 export interface SelectionBounds {
   min: [number, number, number];
   max: [number, number, number];
+  /** Additional inclusive boxes; the selection is the union of all boxes. */
+  extra_boxes?: [[number, number, number], [number, number, number]][];
+}
+
+export interface BlockEntityInfo {
+  region: string;
+  /** Region-local position. */
+  position: [number, number, number];
+  world: [number, number, number] | null;
+  kind: string;
+  data: Record<string, unknown>;
+}
+
+export interface EntityInfo {
+  /** Index in the document's entity list (valid until the next edit). */
+  index: number;
+  region: string;
+  /** Region-local continuous position. */
+  position: [number, number, number];
+  kind: string;
+  data: Record<string, unknown>;
+}
+
+export interface EntityListing {
+  block_entities: BlockEntityInfo[];
+  entities: EntityInfo[];
+}
+
+/** Region metadata + palette for the renderer (geometry comes from regionFaces). */
+export interface RegionView {
+  region_id: string;
+  origin: [number, number, number];
+  size: [number, number, number];
+  palette: string[];
+  preview_positions: [number, number, number][];
 }
 
 export interface FillRequest {
@@ -239,6 +274,7 @@ export interface ExportReport {
 interface WasmExports {
   memory: WebAssembly.Memory;
   schematic_command(ptr: number, len: number): number;
+  schematic_region_faces(ptr: number, len: number): number;
   wasm_alloc(size: number): number;
   wasm_dealloc(ptr: number, size: number): void;
   wasm_get_response_ptr(): number;
@@ -266,7 +302,7 @@ interface WasmExports {
   schematic_inspect_document(): number;
   schematic_validate_document(): number;
   schematic_diff_with_source(): number;
-  schematic_diff_with_litematic(ptr: number, len: number): number;
+  schematic_diff_with_file(ptr: number, len: number): number;
   schematic_analyze_document(ptr: number, len: number): number;
 }
 
@@ -459,9 +495,9 @@ export class SchematicEngine {
     return this.handleJsonResponse<DocumentDiff>(code);
   }
 
-  diffWithLitematic(bytes: Uint8Array): DocumentDiff {
+  diffWithFile(bytes: Uint8Array): DocumentDiff {
     const code = this.callWithBytes(bytes, (ptr, len) =>
-      this.exports.schematic_diff_with_litematic(ptr, len),
+      this.exports.schematic_diff_with_file(ptr, len),
     );
     return this.handleJsonResponse<DocumentDiff>(code);
   }
@@ -477,6 +513,23 @@ export class SchematicEngine {
       const code = this.exports.schematic_analyze_document(0, 0);
       return this.handleJsonResponse<AnalysisReport>(code);
     }
+  }
+
+  /**
+   * Face-culled binary mesh for a region (all chunks, or just `chunks`).
+   * Returns a copy detached from WASM memory so it can be transferred.
+   */
+  regionFaces(region: string, chunks?: [number, number, number][]): Uint8Array {
+    const bytes = this.textEncoder.encode(JSON.stringify({ region, chunks }));
+    const code = this.callWithBytes(bytes, (ptr, len) =>
+      this.exports.schematic_region_faces(ptr, len),
+    );
+    if (code !== 0) {
+      this.handleJsonResponse<never>(code);
+    }
+    const ptr = this.exports.wasm_get_response_ptr();
+    const len = this.exports.wasm_get_response_len();
+    return new Uint8Array(this.exports.memory.buffer, ptr, len).slice();
   }
 
   /** Generic JSON command channel (`Session::command` on the Rust side). */

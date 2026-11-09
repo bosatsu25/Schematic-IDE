@@ -1,3 +1,4 @@
+pub mod mesh;
 pub mod session;
 
 pub use schematic_diff::{
@@ -83,6 +84,33 @@ mod wasm_exports {
             match session.command(bytes) {
                 Ok(value) => {
                     session.set_json_response(&value);
+                    0
+                }
+                Err(e) => {
+                    session.set_error_response(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    /// Binary face mesh: args JSON `{"region": "...", "chunks": [[x,y,z],...]?}`.
+    #[no_mangle]
+    pub extern "C" fn schematic_region_faces(ptr: *const u8, len: usize) -> i32 {
+        #[derive(serde::Deserialize)]
+        struct Args {
+            region: String,
+            chunks: Option<Vec<[i64; 3]>>,
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+        SESSION.with(|s| {
+            let mut session = s.borrow_mut();
+            let result = serde_json::from_slice::<Args>(bytes)
+                .map_err(|e| e.to_string())
+                .and_then(|a| session.region_faces(&a.region, a.chunks.as_deref()));
+            match result {
+                Ok(faces) => {
+                    session.set_bytes_response(faces);
                     0
                 }
                 Err(e) => {
@@ -529,11 +557,11 @@ mod wasm_exports {
     }
 
     #[no_mangle]
-    pub extern "C" fn schematic_diff_with_litematic(ptr: *const u8, len: usize) -> i32 {
+    pub extern "C" fn schematic_diff_with_file(ptr: *const u8, len: usize) -> i32 {
         let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
         SESSION.with(|s| {
             let mut session = s.borrow_mut();
-            match session.diff_with_litematic(bytes) {
+            match session.diff_with_bytes(bytes) {
                 Ok(diff) => {
                     session.set_json_response(&diff);
                     0

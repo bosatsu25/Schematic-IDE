@@ -70,6 +70,11 @@ export class SchematicWorkerClient {
     };
   }
 
+  /** Face-culled binary mesh (see `SchematicEngine.regionFaces`). */
+  async regionFaces(region: string, chunks?: [number, number, number][]): Promise<ArrayBuffer> {
+    return this.send({ type: 'REGION_FACES', region, chunks });
+  }
+
   /** Generic engine command (see `SchematicEngine.command`). */
   async command<T>(cmd: string, args: unknown = {}): Promise<T> {
     return this.send({ type: 'COMMAND', cmd, args });
@@ -170,8 +175,8 @@ export class SchematicWorkerClient {
     return this.send({ type: 'DIFF_WITH_SOURCE' });
   }
 
-  async diffWithLitematic(buffer: ArrayBuffer): Promise<DocumentDiff> {
-    return this.send({ type: 'DIFF_WITH_LITEMATIC', buffer });
+  async diffWithFile(buffer: ArrayBuffer): Promise<DocumentDiff> {
+    return this.send({ type: 'DIFF_WITH_FILE', buffer });
   }
 
   async analyzeDocument(regionId?: string): Promise<AnalysisReport> {

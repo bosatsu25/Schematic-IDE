@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { useSchematicStore, ExportFormat } from '../store/schematicStore';
 import { ExportLossDialog } from './ExportLossDialog';
+import { SCHEMATIC_ACCEPT } from '../files';
 
 export const Header: React.FC = () => {
   const {
@@ -50,7 +51,7 @@ export const Header: React.FC = () => {
       <div className="header-actions">
         <input
           type="file"
-          accept=".litematic,.schem,.nbt"
+          accept={SCHEMATIC_ACCEPT}
           ref={fileInputRef}
           style={{ display: 'none' }}
           data-testid="open-file-input"

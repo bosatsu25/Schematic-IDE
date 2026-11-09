@@ -121,7 +121,7 @@ impl DocumentValidator {
                 format!("Region '{region_name}' has an empty palette"),
                 Some(region_name),
                 None,
-                Fixability::Automatic,
+                Fixability::Manual,
             ));
         } else {
             for (idx, state) in palette.iter() {
@@ -172,7 +172,7 @@ impl DocumentValidator {
                     ),
                     Some(region_name),
                     Some([wx, wy, wz]),
-                    Fixability::Automatic,
+                    Fixability::Manual,
                 ));
             }
 
@@ -222,7 +222,7 @@ impl DocumentValidator {
                                         ),
                                         Some(region_name),
                                         Some([wx, wy, wz]),
-                                        Fixability::Automatic,
+                                        Fixability::Manual,
                                     ));
                                 }
                             }

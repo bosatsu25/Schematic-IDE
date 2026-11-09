@@ -241,7 +241,7 @@ describe('SchematicEngine WASM wrapper', () => {
     expect(editedDiff.block_diffs[0].after?.name).toBe('minecraft:emerald_block');
 
     // Diffing current edited document with original sampleBytes produces 1 added block
-    const fileDiff = engine.diffWithLitematic(sampleBytes);
+    const fileDiff = engine.diffWithFile(sampleBytes);
     expect(fileDiff.total_added).toBe(1);
   });
 
@@ -273,7 +273,7 @@ describe('SchematicEngine WASM wrapper', () => {
     expect(structSummary.regions[0].non_air_blocks).toBe(12);
 
     // Diff between Sponge engine and Structure engine
-    const diff = engineStruct.diffWithLitematic(spongeBytes);
+    const diff = engineStruct.diffWithFile(spongeBytes);
     expect(diff.total_added).toBe(0);
     expect(diff.total_removed).toBe(0);
     expect(diff.total_modified).toBe(0);

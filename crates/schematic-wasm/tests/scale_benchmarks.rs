@@ -104,6 +104,7 @@ fn run_scale_benchmark(
             selection: Some(SelectionBounds {
                 min: [0, 0, 0],
                 max: [(width / 2) as i32, (height / 2) as i32, (length / 2) as i32],
+                ..Default::default()
             }),
         })
         .unwrap();

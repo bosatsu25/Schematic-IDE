@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useSchematicStore, SidebarTab } from '../store/schematicStore';
+import { SCHEMATIC_ACCEPT, isSchematicFile } from '../files';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -26,7 +27,20 @@ export const Sidebar: React.FC = () => {
     selectDiff,
     analysisReport,
     runAnalysis,
+    hiddenRegions,
+    toggleRegionVisibility,
+    dimInactiveRegions,
+    setDimInactiveRegions,
+    previewFix,
+    entities,
+    blockEntities,
+    selectedEntity,
+    selectEntity,
+    previewRemoveEntities,
+    previewMoveEntity,
+    pickBlock,
   } = useSchematicStore();
+  const [entityFilter, setEntityFilter] = useState('');
 
   const [inspectCoords, setInspectCoords] = useState<{ x: number; y: number; z: number }>({
     x: 0,
@@ -160,6 +174,18 @@ export const Sidebar: React.FC = () => {
         >
           Analysis
         </button>
+        <button
+          className={`sidebar-tab-btn ${activeTab === 'entities' ? 'active' : ''}`}
+          data-testid="tab-entities"
+          onClick={() => setActiveTab('entities')}
+        >
+          Entities
+          {entities.length + blockEntities.length > 0 && (
+            <span className="tab-badge badge-diff" data-testid="entities-badge">
+              {entities.length + blockEntities.length}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* TAB 1: REGIONS & SELECTION */}
@@ -204,6 +230,31 @@ export const Sidebar: React.FC = () => {
                   <span>Palette Count:</span>
                   <span>{currentRegion.palette.length}</span>
                 </div>
+              </div>
+            )}
+
+            {document.regions.length > 1 && (
+              <div className="region-visibility" data-testid="region-visibility-list">
+                {document.regions.map((reg) => (
+                  <label key={reg.name} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      data-testid={`region-visibility-${reg.name}`}
+                      checked={!hiddenRegions[reg.name]}
+                      onChange={() => toggleRegionVisibility(reg.name)}
+                    />
+                    <span>{reg.name}</span>
+                  </label>
+                ))}
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    data-testid="dim-inactive-toggle"
+                    checked={dimInactiveRegions}
+                    onChange={(e) => setDimInactiveRegions(e.target.checked)}
+                  />
+                  <span>Dim inactive regions</span>
+                </label>
               </div>
             )}
           </div>
@@ -471,13 +522,25 @@ export const Sidebar: React.FC = () => {
         <div className="panel" data-testid="problems-panel">
           <div className="problems-header">
             <h3>Diagnostics ({diagnostics.length})</h3>
-            <button
-              className="btn btn-xs"
-              data-testid="revalidate-btn"
-              onClick={() => validateDocument()}
-            >
-              Revalidate
-            </button>
+            <div className="diff-action-buttons">
+              {diagnostics.some((d) => d.fixability === 'Automatic') && (
+                <button
+                  className="btn btn-xs btn-success"
+                  data-testid="fix-all-btn"
+                  title="Preview automatic repairs; commit or cancel in the tools panel"
+                  onClick={() => previewFix()}
+                >
+                  Fix all
+                </button>
+              )}
+              <button
+                className="btn btn-xs"
+                data-testid="revalidate-btn"
+                onClick={() => validateDocument()}
+              >
+                Revalidate
+              </button>
+            </div>
           </div>
 
           <div className="problems-summary">
@@ -507,6 +570,18 @@ export const Sidebar: React.FC = () => {
                     </span>
                     <span className="problem-code font-mono">{d.code}</span>
                     <span className="fixability-badge">{d.fixability}</span>
+                    {d.fixability === 'Automatic' && (
+                      <button
+                        className="btn btn-xs"
+                        data-testid={`fix-btn-${i}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          previewFix([d.code]);
+                        }}
+                      >
+                        Fix
+                      </button>
+                    )}
                   </div>
                   <p className="problem-msg">{d.message}</p>
                   {d.position && (
@@ -524,7 +599,24 @@ export const Sidebar: React.FC = () => {
 
       {/* TAB 4: CANONICAL DIFF */}
       {activeTab === 'diff' && (
-        <div className="panel" data-testid="diff-panel">
+        <div
+          className="panel"
+          data-testid="diff-panel"
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes('Files')) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+          onDrop={(e) => {
+            const f = e.dataTransfer.files?.[0];
+            if (f && isSchematicFile(f.name)) {
+              e.preventDefault();
+              e.stopPropagation();
+              runDiffWithFile(f);
+            }
+          }}
+        >
           <div className="panel-header-with-actions">
             <h3>Structural Diff</h3>
             <div className="diff-action-buttons">
@@ -539,7 +631,7 @@ export const Sidebar: React.FC = () => {
                 Compare File...
                 <input
                   type="file"
-                  accept=".litematic"
+                  accept={SCHEMATIC_ACCEPT}
                   style={{ display: 'none' }}
                   data-testid="diff-file-input"
                   onChange={(e) => {
@@ -639,6 +731,99 @@ export const Sidebar: React.FC = () => {
       )}
 
       {/* TAB 5: ANALYSIS */}
+      {activeTab === 'entities' && (
+        <div className="panel" data-testid="entities-panel">
+          <h3>Entities</h3>
+          <input
+            type="text"
+            className="text-input"
+            placeholder="Filter by id..."
+            data-testid="entity-filter"
+            value={entityFilter}
+            onChange={(e) => setEntityFilter(e.target.value)}
+          />
+
+          <h4 className="subsection-title">Block entities ({blockEntities.length})</h4>
+          <div className="entity-list" data-testid="block-entity-list">
+            {blockEntities
+              .filter((b) => b.kind.toLowerCase().includes(entityFilter.toLowerCase()))
+              .map((b, i) => (
+                <button
+                  key={`${b.region}-${b.position.join(',')}`}
+                  className="entity-row"
+                  data-testid={`block-entity-item-${i}`}
+                  onClick={() => {
+                    if (b.world) {
+                      pickBlock({ regionId: b.region, world: b.world, local: b.position }, 'replace');
+                      setActiveTab('inspector');
+                    }
+                  }}
+                >
+                  <span className="font-mono">{b.kind}</span>
+                  <span className="text-muted">
+                    {b.world ? `(${b.world.join(', ')})` : 'outside region'} · {b.region}
+                  </span>
+                </button>
+              ))}
+          </div>
+
+          <h4 className="subsection-title">Entities ({entities.length})</h4>
+          <div className="entity-list" data-testid="entity-list">
+            {entities
+              .filter((e) => e.kind.toLowerCase().includes(entityFilter.toLowerCase()))
+              .map((e) => (
+                <button
+                  key={e.index}
+                  className={`entity-row ${selectedEntity === e.index ? 'active' : ''}`}
+                  data-testid={`entity-item-${e.index}`}
+                  onClick={() => selectEntity(selectedEntity === e.index ? null : e.index)}
+                >
+                  <span className="font-mono">{e.kind}</span>
+                  <span className="text-muted">
+                    ({e.position.map((v) => v.toFixed(1)).join(', ')}) · {e.region}
+                  </span>
+                </button>
+              ))}
+          </div>
+
+          {selectedEntity !== null && entities[selectedEntity] && (
+            <div className="entity-detail" data-testid="entity-detail">
+              <div className="entity-actions">
+                {(
+                  [
+                    ['x-', [-1, 0, 0]],
+                    ['x+', [1, 0, 0]],
+                    ['y-', [0, -1, 0]],
+                    ['y+', [0, 1, 0]],
+                    ['z-', [0, 0, -1]],
+                    ['z+', [0, 0, 1]],
+                  ] as [string, [number, number, number]][]
+                ).map(([label, delta]) => (
+                  <button
+                    key={label}
+                    className="btn btn-xs"
+                    data-testid={`entity-move-${label}`}
+                    onClick={() => previewMoveEntity(selectedEntity, delta)}
+                  >
+                    {label.toUpperCase()}
+                  </button>
+                ))}
+                <button
+                  className="btn btn-xs btn-danger"
+                  data-testid="entity-delete-btn"
+                  onClick={() => previewRemoveEntities([selectedEntity])}
+                >
+                  Delete
+                </button>
+              </div>
+              <pre className="nbt-json" data-testid="entity-nbt">
+                {JSON.stringify(entities[selectedEntity].data, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+
       {activeTab === 'analysis' && (
         <div className="panel" data-testid="analysis-panel">
           <div

@@ -1,88 +1,138 @@
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { getBlockColor } from '@schematic-ide/minecraft-data';
+import {
+  buildCellOutlines,
+  buildChunkGeometry,
+  chunkKey,
+  decodeFaceStream,
+  paletteColors,
+  packFace,
+} from './chunkGeometry';
 
-export { getBlockColor };
+export { getBlockColor, decodeFaceStream, buildChunkGeometry, buildCellOutlines, chunkKey, packFace };
+export type { ChunkFaces } from './chunkGeometry';
 
-export interface RenderRegionOptions {
-  origin: [number, number, number];
-  size: [number, number, number];
+type Vec3 = [number, number, number];
+
+/** Region metadata the renderer needs (mirrors the engine's `RegionView`). */
+export interface RegionViewData {
+  region_id: string;
+  origin: Vec3;
+  size: Vec3;
   palette: string[];
-  blocks: number[]; // flat [x, y, z, pal_idx, ...]
-  preview_diff?: {
-    modified_positions: [number, number, number][];
-  };
+  /** Region-local positions changed by the pending preview. */
+  preview_positions: Vec3[];
 }
 
 export interface SelectionBoxCoords {
-  min: [number, number, number];
-  max: [number, number, number];
+  min: Vec3;
+  max: Vec3;
 }
 
 export interface DiffOverlay {
-  added_positions?: [number, number, number][];
-  removed_positions?: [number, number, number][];
-  modified_positions?: [number, number, number][];
+  added_positions?: Vec3[];
+  removed_positions?: Vec3[];
+  modified_positions?: Vec3[];
+}
+
+export interface EntityMarker {
+  /** World-space continuous position. */
+  position: Vec3;
+  kind: string;
+  selected?: boolean;
+}
+
+export interface PickHit {
+  regionId: string;
+  /** World block coordinates of the hit block. */
+  world: Vec3;
+  /** Region-local block coordinates of the hit block. */
+  local: Vec3;
+  /** Outward normal of the hit face (adjacent cell = world + normal). */
+  normal: Vec3;
+}
+
+export interface RegionStyle {
+  visible: boolean;
+  /** Drawn translucent (e.g. when another region is active). */
+  dimmed: boolean;
+}
+
+/** Outline overlays above this many cells collapse to their bounding box. */
+const MAX_OUTLINED_CELLS = 20000;
+
+interface RegionEntry {
+  view: RegionViewData;
+  colors: Float32Array;
+  group: THREE.Group;
+  chunks: Map<string, THREE.Mesh>;
+  boundary: THREE.LineSegments;
+  preview?: THREE.LineSegments;
+  style: RegionStyle;
+}
+
+function disposeObject(obj: THREE.Object3D): void {
+  obj.traverse((child) => {
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+      child.geometry.dispose();
+    }
+  });
 }
 
 export class VoxelRenderer {
-  private canvas?: HTMLCanvasElement;
   private renderer?: THREE.WebGLRenderer;
-  private scene: THREE.Scene;
+  private controls?: OrbitControls;
+  private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
-  private voxelGroup: THREE.Group;
-  private wireframeGroup: THREE.Group;
-  private previewHighlightGroup: THREE.Group;
-  private diffHighlightGroup: THREE.Group;
-  private selectionBoxMesh?: THREE.LineSegments;
-  private regionBoxMesh?: THREE.LineSegments;
-  private animFrameId?: number;
+  private regions = new Map<string, RegionEntry>();
+  private overlayGroup = new THREE.Group();
+  private selectionLines?: THREE.LineSegments;
+  private hoverLines?: THREE.LineSegments;
+  private diffGroup = new THREE.Group();
+  private entityGroup = new THREE.Group();
+  private raycaster = new THREE.Raycaster();
+  private renderQueued = false;
+  private hasFramed = false;
+
+  private solidMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
+  private dimmedMaterial = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.3,
+    depthWrite: false,
+  });
+  private boundaryMaterial = new THREE.LineBasicMaterial({ color: 0x4a9eff });
+  private boundaryDimMaterial = new THREE.LineBasicMaterial({
+    color: 0x4a9eff,
+    transparent: true,
+    opacity: 0.35,
+  });
+  private previewMaterial = new THREE.LineBasicMaterial({ color: 0x00ff88 });
+  private selectionMaterial = new THREE.LineBasicMaterial({ color: 0xffaa00 });
+  private hoverMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
 
   constructor(canvas?: HTMLCanvasElement) {
-    this.canvas = canvas;
-    this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color('#1a1a24');
-
-    const aspect = canvas && canvas.clientHeight > 0
-      ? canvas.clientWidth / canvas.clientHeight
-      : 1;
-    this.camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
+    const aspect = canvas && canvas.clientHeight > 0 ? canvas.clientWidth / canvas.clientHeight : 1;
+    this.camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 10000);
     this.camera.position.set(20, 20, 30);
     this.camera.lookAt(0, 0, 0);
 
-    // Ambient and Directional Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-    this.scene.add(ambientLight);
-
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(50, 80, 50);
-    this.scene.add(dirLight);
-
-    // Groups
-    this.voxelGroup = new THREE.Group();
-    this.wireframeGroup = new THREE.Group();
-    this.previewHighlightGroup = new THREE.Group();
-    this.diffHighlightGroup = new THREE.Group();
-
-    this.scene.add(this.voxelGroup);
-    this.scene.add(this.wireframeGroup);
-    this.scene.add(this.previewHighlightGroup);
-    this.scene.add(this.diffHighlightGroup);
-
-    // Grid helper
     const grid = new THREE.GridHelper(32, 32, 0x444455, 0x222233);
     grid.position.y = -0.01;
-    this.scene.add(grid);
+    this.scene.add(grid, this.overlayGroup, this.diffGroup, this.entityGroup);
 
     if (canvas) {
       try {
-        this.renderer = new THREE.WebGLRenderer({
-          canvas,
-          antialias: true,
-          alpha: false,
-        });
+        this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+        this.renderer.setPixelRatio(typeof window !== 'undefined' ? window.devicePixelRatio : 1);
         this.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+        this.controls = new OrbitControls(this.camera, canvas);
+        this.controls.enableDamping = false;
+        this.controls.addEventListener('change', () => this.requestRender());
       } catch {
-        // Fallback for headless/unsupported WebGL
+        // Headless or WebGL-less environment: keep the scene graph only.
       }
     }
   }
@@ -95,240 +145,329 @@ export class VoxelRenderer {
     return this.camera;
   }
 
-  renderRegion(options: RenderRegionOptions): void {
-    // Clear previous voxels
-    while (this.voxelGroup.children.length > 0) {
-      const child = this.voxelGroup.children.pop()!;
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose();
-        if (Array.isArray(child.material)) {
-          child.material.forEach((m) => m.dispose());
-        } else {
-          child.material.dispose();
-        }
+  /** Region ids currently held by the renderer. */
+  regionIds(): string[] {
+    return [...this.regions.keys()];
+  }
+
+  /** Number of chunk meshes held for a region (for tests/diagnostics). */
+  chunkCount(regionId: string): number {
+    return this.regions.get(regionId)?.chunks.size ?? 0;
+  }
+
+  /**
+   * Applies a face buffer from the engine. With `replaceAll` every chunk of the
+   * region is rebuilt; otherwise only the chunks contained in the buffer are
+   * replaced (empty chunks are removed), leaving the rest untouched.
+   */
+  updateRegion(view: RegionViewData, faces: ArrayBuffer, replaceAll: boolean): void {
+    let entry = this.regions.get(view.region_id);
+    if (!entry) {
+      const group = new THREE.Group();
+      group.name = `region:${view.region_id}`;
+      entry = {
+        view,
+        colors: paletteColors(view.palette),
+        group,
+        chunks: new Map(),
+        boundary: new THREE.LineSegments(),
+        style: { visible: true, dimmed: false },
+      };
+      this.scene.add(group);
+      this.regions.set(view.region_id, entry);
+    }
+
+    const paletteChanged =
+      entry.view.palette.length !== view.palette.length ||
+      entry.view.palette.some((p, i) => p !== view.palette[i]);
+    const boundsChanged =
+      entry.view.origin.some((v, i) => v !== view.origin[i]) ||
+      entry.view.size.some((v, i) => v !== view.size[i]);
+    if (paletteChanged) entry.colors = paletteColors(view.palette);
+    entry.view = view;
+
+    if (replaceAll || boundsChanged) {
+      for (const mesh of entry.chunks.values()) {
+        entry.group.remove(mesh);
+        mesh.geometry.dispose();
+      }
+      entry.chunks.clear();
+    }
+
+    for (const { chunk, faces: chunkFaces } of decodeFaceStream(faces)) {
+      const key = chunkKey(chunk);
+      const old = entry.chunks.get(key);
+      if (old) {
+        entry.group.remove(old);
+        old.geometry.dispose();
+        entry.chunks.delete(key);
+      }
+      if (chunkFaces.length === 0) continue;
+      const mesh = new THREE.Mesh(
+        buildChunkGeometry(chunkFaces, view.origin, entry.colors),
+        entry.style.dimmed ? this.dimmedMaterial : this.solidMaterial,
+      );
+      mesh.userData = { regionId: view.region_id, chunk: key };
+      entry.chunks.set(key, mesh);
+      entry.group.add(mesh);
+    }
+
+    this.rebuildBoundary(entry);
+    this.rebuildPreview(entry);
+    if (!this.hasFramed) {
+      this.fitToContent();
+      this.hasFramed = true;
+    }
+    this.requestRender();
+  }
+
+  /** Drops regions that are no longer in the document. */
+  retainRegions(ids: string[]): void {
+    const keep = new Set(ids);
+    for (const [id, entry] of this.regions) {
+      if (!keep.has(id)) {
+        this.scene.remove(entry.group);
+        disposeObject(entry.group);
+        this.regions.delete(id);
       }
     }
+    if (this.regions.size === 0) this.hasFramed = false;
+    this.requestRender();
+  }
 
-    // Clear preview highlights
-    while (this.previewHighlightGroup.children.length > 0) {
-      const child = this.previewHighlightGroup.children.pop()!;
-      if (child instanceof THREE.LineSegments) {
-        child.geometry.dispose();
-        (child.material as THREE.Material).dispose();
-      }
+  setRegionStyle(regionId: string, style: Partial<RegionStyle>): void {
+    const entry = this.regions.get(regionId);
+    if (!entry) return;
+    entry.style = { ...entry.style, ...style };
+    entry.group.visible = entry.style.visible;
+    for (const mesh of entry.chunks.values()) {
+      mesh.material = entry.style.dimmed ? this.dimmedMaterial : this.solidMaterial;
+      mesh.renderOrder = entry.style.dimmed ? 1 : 0;
     }
+    entry.boundary.material = entry.style.dimmed ? this.boundaryDimMaterial : this.boundaryMaterial;
+    this.requestRender();
+  }
 
-    const { origin, size, palette, blocks, preview_diff } = options;
-
-    // Region boundary wireframe
-    if (this.regionBoxMesh) {
-      this.wireframeGroup.remove(this.regionBoxMesh);
-      this.regionBoxMesh.geometry.dispose();
-      (this.regionBoxMesh.material as THREE.Material).dispose();
-      this.regionBoxMesh = undefined;
-    }
-
-    const boxMin = new THREE.Vector3(origin[0], origin[1], origin[2]);
-    const boxMax = new THREE.Vector3(
-      origin[0] + size[0],
-      origin[1] + size[1],
-      origin[2] + size[2],
+  private rebuildBoundary(entry: RegionEntry): void {
+    entry.group.remove(entry.boundary);
+    entry.boundary.geometry.dispose();
+    const { origin, size } = entry.view;
+    const geom = new THREE.EdgesGeometry(new THREE.BoxGeometry(size[0], size[1], size[2]));
+    entry.boundary = new THREE.LineSegments(
+      geom,
+      entry.style.dimmed ? this.boundaryDimMaterial : this.boundaryMaterial,
     );
-    const boxGeom = new THREE.BoxGeometry(size[0], size[1], size[2]);
-    const edges = new THREE.EdgesGeometry(boxGeom);
-    this.regionBoxMesh = new THREE.LineSegments(
-      edges,
-      new THREE.LineBasicMaterial({ color: 0x4a9eff, linewidth: 2 }),
-    );
-    this.regionBoxMesh.position.set(
+    entry.boundary.position.set(
       origin[0] + size[0] / 2,
       origin[1] + size[1] / 2,
       origin[2] + size[2] / 2,
     );
-    this.wireframeGroup.add(this.regionBoxMesh);
+    entry.boundary.userData = { boundary: true };
+    entry.group.add(entry.boundary);
+  }
 
-    // Group blocks by palette index
-    const blocksByPalette = new Map<number, { x: number; y: number; z: number }[]>();
-    for (let i = 0; i < blocks.length; i += 4) {
-      const x = blocks[i];
-      const y = blocks[i + 1];
-      const z = blocks[i + 2];
-      const palIdx = blocks[i + 3];
-
-      if (!blocksByPalette.has(palIdx)) {
-        blocksByPalette.set(palIdx, []);
-      }
-      blocksByPalette.get(palIdx)!.push({ x, y, z });
+  private rebuildPreview(entry: RegionEntry): void {
+    if (entry.preview) {
+      entry.group.remove(entry.preview);
+      entry.preview.geometry.dispose();
+      entry.preview = undefined;
     }
+    const cells = entry.view.preview_positions;
+    if (cells.length === 0) return;
+    const o = entry.view.origin;
+    const world = cells.map((c) => [o[0] + c[0], o[1] + c[1], o[2] + c[2]]);
+    entry.preview = new THREE.LineSegments(this.outlineGeometry(world), this.previewMaterial);
+    entry.group.add(entry.preview);
+  }
 
-    const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
-    const matrix = new THREE.Matrix4();
-
-    for (const [palIdx, instances] of blocksByPalette.entries()) {
-      const stateName = palette[palIdx] || 'minecraft:stone';
-      const colorHex = getBlockColor(stateName);
-      const material = new THREE.MeshLambertMaterial({
-        color: new THREE.Color(colorHex),
-      });
-
-      const instMesh = new THREE.InstancedMesh(
-        boxGeometry,
-        material,
-        instances.length,
-      );
-
-      for (let k = 0; k < instances.length; k++) {
-        const { x, y, z } = instances[k];
-        matrix.setPosition(
-          origin[0] + x + 0.5,
-          origin[1] + y + 0.5,
-          origin[2] + z + 0.5,
-        );
-        instMesh.setMatrixAt(k, matrix);
-      }
-      instMesh.instanceMatrix.needsUpdate = true;
-      this.voxelGroup.add(instMesh);
-    }
-
-    // Highlight preview diff positions if any
-    if (preview_diff && preview_diff.modified_positions.length > 0) {
-      const highlightGeom = new THREE.BoxGeometry(1.02, 1.02, 1.02);
-      const highlightEdges = new THREE.EdgesGeometry(highlightGeom);
-      const highlightMat = new THREE.LineBasicMaterial({
-        color: 0x00ff88,
-        linewidth: 2,
-      });
-
-      for (const pos of preview_diff.modified_positions) {
-        const seg = new THREE.LineSegments(highlightEdges, highlightMat);
-        seg.position.set(
-          origin[0] + pos[0] + 0.5,
-          origin[1] + pos[1] + 0.5,
-          origin[2] + pos[2] + 0.5,
-        );
-        this.previewHighlightGroup.add(seg);
+  /** Outlines cells, collapsing huge sets to their bounding box. */
+  private outlineGeometry(cells: number[][]): THREE.BufferGeometry {
+    if (cells.length <= MAX_OUTLINED_CELLS) return buildCellOutlines(cells);
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (const c of cells) {
+      for (let i = 0; i < 3; i++) {
+        min[i] = Math.min(min[i], c[i]);
+        max[i] = Math.max(max[i], c[i] + 1);
       }
     }
+    const size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+    const geom = new THREE.EdgesGeometry(new THREE.BoxGeometry(size[0], size[1], size[2]));
+    geom.translate(min[0] + size[0] / 2, min[1] + size[1] / 2, min[2] + size[2] / 2);
+    return geom;
+  }
 
-    // Center camera on the region
-    this.centerCamera(boxMin, boxMax);
-    this.render();
+  /** Draws one or more inclusive world-space selection boxes. */
+  setSelectionBoxes(boxes: SelectionBoxCoords[] | null): void {
+    if (this.selectionLines) {
+      this.overlayGroup.remove(this.selectionLines);
+      this.selectionLines.geometry.dispose();
+      this.selectionLines = undefined;
+    }
+    if (boxes && boxes.length > 0) {
+      const merged: number[] = [];
+      for (const box of boxes) {
+        const min = [0, 1, 2].map((i) => Math.min(box.min[i], box.max[i]));
+        const max = [0, 1, 2].map((i) => Math.max(box.min[i], box.max[i]) + 1);
+        const size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+        const g = new THREE.EdgesGeometry(new THREE.BoxGeometry(size[0], size[1], size[2]));
+        g.translate(min[0] + size[0] / 2, min[1] + size[1] / 2, min[2] + size[2] / 2);
+        merged.push(...(g.getAttribute('position').array as Float32Array));
+        g.dispose();
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.Float32BufferAttribute(merged, 3));
+      this.selectionLines = new THREE.LineSegments(geom, this.selectionMaterial);
+      this.overlayGroup.add(this.selectionLines);
+    }
+    this.requestRender();
   }
 
   setSelectionBox(box: SelectionBoxCoords | null): void {
-    if (this.selectionBoxMesh) {
-      this.wireframeGroup.remove(this.selectionBoxMesh);
-      this.selectionBoxMesh.geometry.dispose();
-      (this.selectionBoxMesh.material as THREE.Material).dispose();
-      this.selectionBoxMesh = undefined;
+    this.setSelectionBoxes(box ? [box] : null);
+  }
+
+  /** Highlights the hovered block (world coordinates) or clears it. */
+  setHover(world: Vec3 | null): void {
+    if (this.hoverLines) {
+      this.overlayGroup.remove(this.hoverLines);
+      this.hoverLines.geometry.dispose();
+      this.hoverLines = undefined;
     }
-
-    if (!box) {
-      this.render();
-      return;
+    if (world) {
+      this.hoverLines = new THREE.LineSegments(buildCellOutlines([world], 0.03), this.hoverMaterial);
+      this.overlayGroup.add(this.hoverLines);
     }
-
-    const minX = Math.min(box.min[0], box.max[0]);
-    const minY = Math.min(box.min[1], box.max[1]);
-    const minZ = Math.min(box.min[2], box.max[2]);
-    const maxX = Math.max(box.min[0], box.max[0]) + 1;
-    const maxY = Math.max(box.min[1], box.max[1]) + 1;
-    const maxZ = Math.max(box.min[2], box.max[2]) + 1;
-
-    const sizeX = maxX - minX;
-    const sizeY = maxY - minY;
-    const sizeZ = maxZ - minZ;
-
-    const geom = new THREE.BoxGeometry(sizeX, sizeY, sizeZ);
-    const edges = new THREE.EdgesGeometry(geom);
-    this.selectionBoxMesh = new THREE.LineSegments(
-      edges,
-      new THREE.LineBasicMaterial({ color: 0xffaa00, linewidth: 2 }),
-    );
-    this.selectionBoxMesh.position.set(
-      minX + sizeX / 2,
-      minY + sizeY / 2,
-      minZ + sizeZ / 2,
-    );
-    this.wireframeGroup.add(this.selectionBoxMesh);
-    this.render();
+    this.requestRender();
   }
 
   setDiffOverlay(overlay: DiffOverlay | null): void {
-    while (this.diffHighlightGroup.children.length > 0) {
-      const child = this.diffHighlightGroup.children.pop()!;
-      if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
-        child.geometry.dispose();
-        if (Array.isArray(child.material)) {
-          child.material.forEach((m) => m.dispose());
-        } else {
-          child.material.dispose();
-        }
-      }
+    while (this.diffGroup.children.length > 0) {
+      const child = this.diffGroup.children.pop()!;
+      disposeObject(child);
     }
-
-    if (!overlay) {
-      this.render();
-      return;
+    if (overlay) {
+      const add = (cells: Vec3[] | undefined, color: number) => {
+        if (!cells || cells.length === 0) return;
+        this.diffGroup.add(
+          new THREE.LineSegments(
+            this.outlineGeometry(cells),
+            new THREE.LineBasicMaterial({ color }),
+          ),
+        );
+      };
+      add(overlay.added_positions, 0x22c55e);
+      add(overlay.modified_positions, 0xf59e0b);
+      add(overlay.removed_positions, 0xef4444);
     }
-
-    const boxGeom = new THREE.BoxGeometry(1.04, 1.04, 1.04);
-    const boxEdges = new THREE.EdgesGeometry(boxGeom);
-
-    if (overlay.added_positions && overlay.added_positions.length > 0) {
-      const addedMat = new THREE.LineBasicMaterial({ color: 0x22c55e, linewidth: 2 });
-      for (const pos of overlay.added_positions) {
-        const seg = new THREE.LineSegments(boxEdges, addedMat);
-        seg.position.set(pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
-        this.diffHighlightGroup.add(seg);
-      }
-    }
-
-    if (overlay.modified_positions && overlay.modified_positions.length > 0) {
-      const modMat = new THREE.LineBasicMaterial({ color: 0xf59e0b, linewidth: 2 });
-      for (const pos of overlay.modified_positions) {
-        const seg = new THREE.LineSegments(boxEdges, modMat);
-        seg.position.set(pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
-        this.diffHighlightGroup.add(seg);
-      }
-    }
-
-    if (overlay.removed_positions && overlay.removed_positions.length > 0) {
-      const remEdgesMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 2 });
-      const remFillMat = new THREE.MeshBasicMaterial({
-        color: 0xef4444,
-        transparent: true,
-        opacity: 0.35,
-      });
-      for (const pos of overlay.removed_positions) {
-        const seg = new THREE.LineSegments(boxEdges, remEdgesMat);
-        seg.position.set(pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
-        this.diffHighlightGroup.add(seg);
-
-        const fill = new THREE.Mesh(boxGeom, remFillMat);
-        fill.position.set(pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
-        this.diffHighlightGroup.add(fill);
-      }
-    }
-
-    this.render();
+    this.requestRender();
   }
 
-  centerCamera(min?: THREE.Vector3, max?: THREE.Vector3): void {
-    const center = new THREE.Vector3();
-    let radius = 15;
-
-    if (min && max) {
-      center.addVectors(min, max).multiplyScalar(0.5);
-      radius = min.distanceTo(max) * 0.8;
+  /** Shows entities as small markers (selected ones larger and highlighted). */
+  setEntityMarkers(markers: EntityMarker[]): void {
+    while (this.entityGroup.children.length > 0) {
+      disposeObject(this.entityGroup.children.pop()!);
     }
+    if (markers.length > 0) {
+      const geom = new THREE.OctahedronGeometry(0.25);
+      for (const m of markers) {
+        const mesh = new THREE.Mesh(
+          geom,
+          new THREE.MeshBasicMaterial({ color: m.selected ? 0xffff00 : 0xff66cc }),
+        );
+        mesh.position.set(m.position[0], m.position[1] + 0.25, m.position[2]);
+        if (m.selected) mesh.scale.setScalar(1.6);
+        mesh.userData = { entityKind: m.kind };
+        this.entityGroup.add(mesh);
+      }
+    }
+    this.requestRender();
+  }
 
-    this.camera.position.set(
-      center.x + radius,
-      center.y + radius * 0.9,
-      center.z + radius,
-    );
+  /** Frames the camera on every visible region. */
+  fitToContent(): void {
+    const box = new THREE.Box3();
+    for (const entry of this.regions.values()) {
+      if (!entry.style.visible) continue;
+      const { origin, size } = entry.view;
+      box.expandByPoint(new THREE.Vector3(...origin));
+      box.expandByPoint(
+        new THREE.Vector3(origin[0] + size[0], origin[1] + size[1], origin[2] + size[2]),
+      );
+    }
+    if (box.isEmpty()) return;
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = Math.max(box.getSize(new THREE.Vector3()).length() * 0.8, 4);
+    this.camera.position.set(center.x + radius, center.y + radius * 0.9, center.z + radius);
     this.camera.lookAt(center);
+    if (this.controls) {
+      this.controls.target.copy(center);
+      this.controls.update();
+    }
+    this.requestRender();
+  }
+
+  /**
+   * Picks the block under normalized device coordinates (-1..1). Returns the
+   * nearest visible block face hit, or null.
+   */
+  pick(ndcX: number, ndcY: number): PickHit | null {
+    this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+    const targets: THREE.Object3D[] = [];
+    for (const entry of this.regions.values()) {
+      if (!entry.style.visible) continue;
+      targets.push(...entry.chunks.values());
+    }
+    const hit = this.raycaster.intersectObjects(targets, false)[0];
+    if (!hit || !hit.face) return null;
+    return this.hitToBlock(hit.object.userData.regionId as string, hit.point, hit.face.normal);
+  }
+
+  /** Picks using client (CSS pixel) coordinates relative to the canvas. */
+  pickAtClient(clientX: number, clientY: number): PickHit | null {
+    const canvas = this.renderer?.domElement;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    return this.pick(x, y);
+  }
+
+  /** Converts a surface hit into the block it belongs to. */
+  hitToBlock(regionId: string, point: THREE.Vector3, normal: THREE.Vector3): PickHit | null {
+    const entry = this.regions.get(regionId);
+    if (!entry) return null;
+    const n: Vec3 = [Math.round(normal.x), Math.round(normal.y), Math.round(normal.z)];
+    const world: Vec3 = [
+      Math.floor(point.x - n[0] * 0.5),
+      Math.floor(point.y - n[1] * 0.5),
+      Math.floor(point.z - n[2] * 0.5),
+    ];
+    const o = entry.view.origin;
+    return {
+      regionId,
+      world,
+      local: [world[0] - o[0], world[1] - o[1], world[2] - o[2]],
+      normal: n,
+    };
+  }
+
+  isRegionVisible(regionId: string): boolean {
+    return this.regions.get(regionId)?.style.visible ?? false;
+  }
+
+  /** Projects a world point to client (CSS pixel) coordinates of the canvas. */
+  projectToClient(world: Vec3): { x: number; y: number } | null {
+    const canvas = this.renderer?.domElement;
+    if (!canvas) return null;
+    this.camera.updateMatrixWorld();
+    const v = new THREE.Vector3(...world).project(this.camera);
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + ((v.x + 1) / 2) * rect.width,
+      y: rect.top + ((1 - v.y) / 2) * rect.height,
+    };
   }
 
   resize(width: number, height: number): void {
@@ -337,22 +476,32 @@ export class VoxelRenderer {
     this.camera.updateProjectionMatrix();
     if (this.renderer) {
       this.renderer.setSize(width, height, false);
-      this.render();
     }
+    this.requestRender();
+  }
+
+  /** Coalesces render requests into one frame. */
+  requestRender(): void {
+    if (!this.renderer || this.renderQueued) return;
+    if (typeof requestAnimationFrame === 'undefined') {
+      this.render();
+      return;
+    }
+    this.renderQueued = true;
+    requestAnimationFrame(() => {
+      this.renderQueued = false;
+      this.render();
+    });
   }
 
   render(): void {
-    if (this.renderer) {
-      this.renderer.render(this.scene, this.camera);
-    }
+    this.renderer?.render(this.scene, this.camera);
   }
 
   dispose(): void {
-    if (this.animFrameId) {
-      cancelAnimationFrame(this.animFrameId);
-    }
-    if (this.renderer) {
-      this.renderer.dispose();
-    }
+    this.controls?.dispose();
+    for (const entry of this.regions.values()) disposeObject(entry.group);
+    this.regions.clear();
+    this.renderer?.dispose();
   }
 }

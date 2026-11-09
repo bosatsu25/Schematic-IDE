@@ -2,8 +2,8 @@ use schematic_analysis::{
     NonAirPolicy, SurfaceAnalyzer, SurfaceFeatureAnalyzer, SurfaceFeatureKind,
 };
 use schematic_core::{
-    BlockPosition, BlockProperty, BlockState, OperationTarget, PaletteIndex, Position, RegionId,
-    Selection,
+    BlockPosition, BlockProperty, BlockState, Bounds, ChunkPosition, OperationTarget, PaletteIndex,
+    Position, RegionId, Selection, SelectionBox,
 };
 use schematic_edit::{
     Clipboard, EditWorkspace, FillCommand, IslandCleanupRequest, MirrorAxis, MirrorCommand,
@@ -70,10 +70,31 @@ pub struct ReplaceRequest {
     pub to_block: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SelectionBounds {
     pub min: [i32; 3],
     pub max: [i32; 3],
+    /// Additional boxes for multi-box selections (each `[min, max]`,
+    /// inclusive world coordinates). The selection is the union.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_boxes: Vec<[[i32; 3]; 2]>,
+}
+
+impl SelectionBounds {
+    pub fn to_selection(&self) -> Selection {
+        let corner = |c: [i32; 3]| Position::new(c[0], c[1], c[2]);
+        let mut boxes = vec![SelectionBox::new(Bounds::from_inclusive(
+            corner(self.min),
+            corner(self.max),
+        ))];
+        for [min, max] in &self.extra_boxes {
+            boxes.push(SelectionBox::new(Bounds::from_inclusive(
+                corner(*min),
+                corner(*max),
+            )));
+        }
+        Selection::from_boxes(boxes)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -224,6 +245,42 @@ pub struct AnalysisReport {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockEntityInfo {
+    pub region: String,
+    pub position: [i64; 3],
+    pub world: Option<[i32; 3]>,
+    pub kind: String,
+    pub data: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EntityInfo {
+    /// Index in the document's entity list (valid until the next edit).
+    pub index: usize,
+    pub region: String,
+    /// Region-local continuous position.
+    pub position: [f64; 3],
+    pub kind: String,
+    pub data: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EntityListing {
+    pub block_entities: Vec<BlockEntityInfo>,
+    pub entities: Vec<EntityInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegionView {
+    pub region_id: String,
+    pub origin: [i32; 3],
+    pub size: [u32; 3],
+    pub palette: Vec<String>,
+    /// Region-local positions the pending preview changes.
+    pub preview_positions: Vec<[i64; 3]>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExportLoss {
     pub code: String,
     /// `error` (export refused), `warning` (visible data lost), `info`.
@@ -245,6 +302,8 @@ pub struct Session {
     workspace: Option<EditWorkspace>,
     clipboard: Option<Clipboard>,
     response_buffer: Vec<u8>,
+    /// Chunks whose rendered faces changed since the renderer last asked.
+    dirty_chunks: BTreeSet<(RegionId, ChunkPosition)>,
 }
 
 impl Default for Session {
@@ -262,6 +321,7 @@ impl Session {
             workspace: None,
             clipboard: None,
             response_buffer: Vec::new(),
+            dirty_chunks: BTreeSet::new(),
         }
     }
 
@@ -336,6 +396,8 @@ impl Session {
         };
 
         let workspace = EditWorkspace::start(doc);
+        self.dirty_chunks.clear();
+        self.clipboard = None;
         let committed_doc = workspace.committed();
         let meta = committed_doc.metadata();
         let mut regions = Vec::new();
@@ -384,6 +446,119 @@ impl Session {
 
     pub fn load_litematic(&mut self, bytes: &[u8]) -> Result<DocumentSummary, String> {
         self.load_schematic(bytes)
+    }
+
+    pub fn preview_replace(&mut self, req: ReplaceRequest) -> Result<PreviewSummary, String> {
+        self.mark_preview_dirty();
+        let result = self.preview_replace_inner(req);
+        self.mark_preview_dirty();
+        result
+    }
+
+    pub fn preview_fill(&mut self, req: FillRequest) -> Result<PreviewSummary, String> {
+        self.mark_preview_dirty();
+        let result = self.preview_fill_inner(req);
+        self.mark_preview_dirty();
+        result
+    }
+
+    pub fn preview_paste(&mut self, req: PasteRequest) -> Result<PreviewSummary, String> {
+        self.mark_preview_dirty();
+        let result = self.preview_paste_inner(req);
+        self.mark_preview_dirty();
+        result
+    }
+
+    pub fn preview_move(&mut self, req: MoveRequest) -> Result<PreviewSummary, String> {
+        self.mark_preview_dirty();
+        let result = self.preview_move_inner(req);
+        self.mark_preview_dirty();
+        result
+    }
+
+    pub fn preview_rotate(&mut self, req: RotateRequest) -> Result<PreviewSummary, String> {
+        self.mark_preview_dirty();
+        let result = self.preview_rotate_inner(req);
+        self.mark_preview_dirty();
+        result
+    }
+
+    pub fn preview_mirror(&mut self, req: MirrorRequest) -> Result<PreviewSummary, String> {
+        self.mark_preview_dirty();
+        let result = self.preview_mirror_inner(req);
+        self.mark_preview_dirty();
+        result
+    }
+
+    pub fn preview_cleanup(&mut self, req: CleanupRequest) -> Result<PreviewSummary, String> {
+        self.mark_preview_dirty();
+        let result = self.preview_cleanup_inner(req);
+        self.mark_preview_dirty();
+        result
+    }
+
+    /// Marks the chunks of the pending preview (call before and after the
+    /// preview changes so both the old and the new preview are redrawn).
+    fn mark_preview_dirty(&mut self) {
+        let chunks = self
+            .workspace
+            .as_ref()
+            .and_then(|ws| ws.pending_preview())
+            .map(crate::mesh::affected_chunks)
+            .unwrap_or_default();
+        self.dirty_chunks.extend(chunks);
+    }
+
+    /// Returns and clears the chunks to re-mesh, grouped by region.
+    pub fn take_dirty_chunks(&mut self) -> BTreeMap<String, Vec<[i64; 3]>> {
+        let mut out: BTreeMap<String, Vec<[i64; 3]>> = BTreeMap::new();
+        for (region, chunk) in std::mem::take(&mut self.dirty_chunks) {
+            out.entry(region.as_str().to_string())
+                .or_default()
+                .push([chunk.x, chunk.y, chunk.z]);
+        }
+        out
+    }
+
+    /// Region metadata and palette (including preview additions) for the
+    /// renderer; block geometry comes from [`Session::region_faces`].
+    pub fn region_view(&self, region_name: &str) -> Result<RegionView, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let view = crate::mesh::RegionView::new(
+            ws.committed(),
+            ws.pending_preview(),
+            &RegionId::new(region_name),
+        )
+        .ok_or_else(|| format!("Region '{region_name}' not found"))?;
+        let r = view.region();
+        Ok(RegionView {
+            region_id: region_name.to_string(),
+            origin: [r.origin().x, r.origin().y, r.origin().z],
+            size: [r.size().x, r.size().y, r.size().z],
+            preview_positions: view.preview_positions(),
+            palette: view.palette,
+        })
+    }
+
+    /// Face-culled binary mesh for `chunks` of a region (all when `None`).
+    pub fn region_faces(
+        &self,
+        region_name: &str,
+        chunks: Option<&[[i64; 3]]>,
+    ) -> Result<Vec<u8>, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let view = crate::mesh::RegionView::new(
+            ws.committed(),
+            ws.pending_preview(),
+            &RegionId::new(region_name),
+        )
+        .ok_or_else(|| format!("Region '{region_name}' not found"))?;
+        let chunk_list: Option<Vec<ChunkPosition>> = chunks.map(|c| {
+            c.iter()
+                .map(|c| ChunkPosition::new(c[0], c[1], c[2]))
+                .collect()
+        });
+        Ok(view.encode_faces(chunk_list.as_deref()))
     }
 
     pub fn get_region_mesh(&self, region_name: &str) -> Result<RegionMeshData, String> {
@@ -480,7 +655,7 @@ impl Session {
         })
     }
 
-    pub fn preview_replace(&mut self, req: ReplaceRequest) -> Result<PreviewSummary, String> {
+    fn preview_replace_inner(&mut self, req: ReplaceRequest) -> Result<PreviewSummary, String> {
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         let reg_id = RegionId::new(&req.region_id);
         let region = ws
@@ -489,10 +664,7 @@ impl Session {
             .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
 
         let selection = match req.selection {
-            Some(b) => Selection::from_corners(
-                Position::new(b.min[0], b.min[1], b.min[2]),
-                Position::new(b.max[0], b.max[1], b.max[2]),
-            ),
+            Some(b) => b.to_selection(),
             None => Selection::from_bounds(region.bounds()),
         };
 
@@ -519,7 +691,7 @@ impl Session {
         })
     }
 
-    pub fn preview_fill(&mut self, req: FillRequest) -> Result<PreviewSummary, String> {
+    fn preview_fill_inner(&mut self, req: FillRequest) -> Result<PreviewSummary, String> {
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         let reg_id = RegionId::new(&req.region_id);
         let _ = ws
@@ -527,18 +699,7 @@ impl Session {
             .region(&reg_id)
             .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
 
-        let selection = Selection::from_corners(
-            Position::new(
-                req.selection.min[0],
-                req.selection.min[1],
-                req.selection.min[2],
-            ),
-            Position::new(
-                req.selection.max[0],
-                req.selection.max[1],
-                req.selection.max[2],
-            ),
-        );
+        let selection = req.selection.to_selection();
 
         let state = parse_block_state(&req.block)?;
         let cmd = FillCommand::new(reg_id, selection, state);
@@ -565,18 +726,7 @@ impl Session {
             return Err(format!("Region '{}' not found", req.region_id));
         }
 
-        let selection = Selection::from_corners(
-            Position::new(
-                req.selection.min[0],
-                req.selection.min[1],
-                req.selection.min[2],
-            ),
-            Position::new(
-                req.selection.max[0],
-                req.selection.max[1],
-                req.selection.max[2],
-            ),
-        );
+        let selection = req.selection.to_selection();
 
         let clipboard = Clipboard::from_document_selection(ws.committed(), &reg_id, &selection)
             .map_err(|e| e.to_string())?;
@@ -585,7 +735,7 @@ impl Session {
         Ok(count)
     }
 
-    pub fn preview_paste(&mut self, req: PasteRequest) -> Result<PreviewSummary, String> {
+    fn preview_paste_inner(&mut self, req: PasteRequest) -> Result<PreviewSummary, String> {
         let clipboard = self.clipboard.clone().ok_or("Clipboard is empty")?;
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         let reg_id = RegionId::new(&req.region_id);
@@ -612,7 +762,7 @@ impl Session {
         })
     }
 
-    pub fn preview_move(&mut self, req: MoveRequest) -> Result<PreviewSummary, String> {
+    fn preview_move_inner(&mut self, req: MoveRequest) -> Result<PreviewSummary, String> {
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         let reg_id = RegionId::new(&req.region_id);
         let _ = ws
@@ -620,18 +770,7 @@ impl Session {
             .region(&reg_id)
             .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
 
-        let selection = Selection::from_corners(
-            Position::new(
-                req.selection.min[0],
-                req.selection.min[1],
-                req.selection.min[2],
-            ),
-            Position::new(
-                req.selection.max[0],
-                req.selection.max[1],
-                req.selection.max[2],
-            ),
-        );
+        let selection = req.selection.to_selection();
 
         let cmd = MoveCommand::new(reg_id, selection, req.delta);
         ws.preview_command(&cmd).map_err(|e| e.to_string())?;
@@ -653,7 +792,7 @@ impl Session {
         })
     }
 
-    pub fn preview_rotate(&mut self, req: RotateRequest) -> Result<PreviewSummary, String> {
+    fn preview_rotate_inner(&mut self, req: RotateRequest) -> Result<PreviewSummary, String> {
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         let reg_id = RegionId::new(&req.region_id);
         let _ = ws
@@ -661,18 +800,7 @@ impl Session {
             .region(&reg_id)
             .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
 
-        let selection = Selection::from_corners(
-            Position::new(
-                req.selection.min[0],
-                req.selection.min[1],
-                req.selection.min[2],
-            ),
-            Position::new(
-                req.selection.max[0],
-                req.selection.max[1],
-                req.selection.max[2],
-            ),
-        );
+        let selection = req.selection.to_selection();
 
         let angle = match req.angle_deg {
             90 => RotationAngle::Deg90,
@@ -702,7 +830,7 @@ impl Session {
         })
     }
 
-    pub fn preview_mirror(&mut self, req: MirrorRequest) -> Result<PreviewSummary, String> {
+    fn preview_mirror_inner(&mut self, req: MirrorRequest) -> Result<PreviewSummary, String> {
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         let reg_id = RegionId::new(&req.region_id);
         let _ = ws
@@ -710,18 +838,7 @@ impl Session {
             .region(&reg_id)
             .ok_or_else(|| format!("Region '{}' not found", req.region_id))?;
 
-        let selection = Selection::from_corners(
-            Position::new(
-                req.selection.min[0],
-                req.selection.min[1],
-                req.selection.min[2],
-            ),
-            Position::new(
-                req.selection.max[0],
-                req.selection.max[1],
-                req.selection.max[2],
-            ),
-        );
+        let selection = req.selection.to_selection();
 
         let axis = match req.axis.to_ascii_lowercase().as_str() {
             "x" => MirrorAxis::X,
@@ -754,7 +871,7 @@ impl Session {
         })
     }
 
-    pub fn preview_cleanup(&mut self, req: CleanupRequest) -> Result<PreviewSummary, String> {
+    fn preview_cleanup_inner(&mut self, req: CleanupRequest) -> Result<PreviewSummary, String> {
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         let reg_id = RegionId::new(&req.region_id);
         let region = ws
@@ -817,6 +934,7 @@ impl Session {
     }
 
     pub fn commit_preview(&mut self) -> Result<HistorySummary, String> {
+        self.mark_preview_dirty();
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         ws.commit_preview().map_err(|e| e.to_string())?;
         Ok(HistorySummary {
@@ -828,6 +946,7 @@ impl Session {
     }
 
     pub fn cancel_preview(&mut self) -> Result<HistorySummary, String> {
+        self.mark_preview_dirty();
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         ws.cancel_preview();
         Ok(HistorySummary {
@@ -839,6 +958,10 @@ impl Session {
     }
 
     pub fn undo(&mut self) -> Result<HistorySummary, String> {
+        if let Some(patch) = self.workspace.as_ref().and_then(|w| w.last_undo()) {
+            self.dirty_chunks
+                .extend(crate::mesh::affected_chunks(patch));
+        }
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         ws.undo().map_err(|e| e.to_string())?;
         Ok(HistorySummary {
@@ -850,6 +973,10 @@ impl Session {
     }
 
     pub fn redo(&mut self) -> Result<HistorySummary, String> {
+        if let Some(patch) = self.workspace.as_ref().and_then(|w| w.last_redo()) {
+            self.dirty_chunks
+                .extend(crate::mesh::affected_chunks(patch));
+        }
         let ws = self.workspace.as_mut().ok_or("No document loaded")?;
         ws.redo().map_err(|e| e.to_string())?;
         Ok(HistorySummary {
@@ -988,6 +1115,194 @@ impl Session {
         })
     }
 
+    /// Lists block entities and entities of the committed document.
+    pub fn list_entities(&self) -> Result<EntityListing, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let doc = ws.committed();
+        let block_entities = doc
+            .block_entities()
+            .map(|be| {
+                let world = doc
+                    .region(&be.region)
+                    .and_then(|r| r.local_to_world(be.position))
+                    .map(|p| [p.x, p.y, p.z]);
+                BlockEntityInfo {
+                    region: be.region.as_str().to_string(),
+                    position: be.position.coordinates(),
+                    world,
+                    kind: be.kind.clone(),
+                    data: nbt_to_json(&NbtTag::Compound(be.data.clone())),
+                }
+            })
+            .collect();
+        let entities = doc
+            .entities()
+            .enumerate()
+            .map(|(index, e)| EntityInfo {
+                index,
+                region: e.region.as_str().to_string(),
+                position: e.position,
+                kind: e.kind.clone(),
+                data: nbt_to_json(&NbtTag::Compound(e.data.clone())),
+            })
+            .collect();
+        Ok(EntityListing {
+            block_entities,
+            entities,
+        })
+    }
+
+    fn preview_patch(
+        &mut self,
+        patch: schematic_edit::PatchSet,
+        message: String,
+    ) -> Result<PreviewSummary, String> {
+        self.mark_preview_dirty();
+        let ws = self.workspace.as_mut().ok_or("No document loaded")?;
+        ws.preview_patch(patch);
+        self.mark_preview_dirty();
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let changed_count = ws
+            .pending_preview()
+            .map(|p| p.changed_block_count())
+            .unwrap_or(0);
+        Ok(PreviewSummary {
+            changed_count,
+            changed_block_entities: preview_be_count(ws),
+            changed_entities: preview_entity_count(ws),
+            can_commit: ws.pending_preview().is_some_and(|p| !p.is_empty()),
+            message,
+        })
+    }
+
+    /// Previews removal of the entities at `indices` (see `list_entities`).
+    pub fn preview_remove_entities(&mut self, indices: &[usize]) -> Result<PreviewSummary, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let all: Vec<_> = ws.committed().entities().collect();
+        let mut changes = Vec::new();
+        for &i in indices {
+            let e = all.get(i).ok_or_else(|| format!("No entity #{i}"))?;
+            changes.push(schematic_edit::EntityChange {
+                before: Some((*e).clone()),
+                after: None,
+            });
+        }
+        let n = changes.len();
+        self.preview_patch(
+            schematic_edit::PatchSet::empty().with_entity_changes([], changes),
+            format!("Remove {n} entit{}", if n == 1 { "y" } else { "ies" }),
+        )
+    }
+
+    /// Previews moving one entity by a (continuous) delta.
+    pub fn preview_move_entity(
+        &mut self,
+        index: usize,
+        delta: [f64; 3],
+    ) -> Result<PreviewSummary, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let e = ws
+            .committed()
+            .entities()
+            .nth(index)
+            .ok_or_else(|| format!("No entity #{index}"))?
+            .clone();
+        let mut moved = e.clone();
+        for (i, d) in delta.iter().enumerate() {
+            moved.position[i] += d;
+        }
+        self.preview_patch(
+            schematic_edit::PatchSet::empty().with_entity_changes(
+                [],
+                [schematic_edit::EntityChange {
+                    before: Some(e),
+                    after: Some(moved),
+                }],
+            ),
+            format!("Move entity by [{}, {}, {}]", delta[0], delta[1], delta[2]),
+        )
+    }
+
+    /// Previews automatic repairs for diagnostics marked `Automatic`
+    /// (optionally only the given codes). Commit/undo like any other edit.
+    pub fn preview_fix(&mut self, codes: Option<&[String]>) -> Result<PreviewSummary, String> {
+        let ws = self.workspace.as_ref().ok_or("No document loaded")?;
+        let doc = ws.committed();
+        let wanted = |code: &str| codes.is_none_or(|c| c.iter().any(|x| x == code));
+        let mut patch = schematic_edit::PatchSet::empty();
+        let mut fixed = 0usize;
+
+        if wanted("ERR_INVALID_PALETTE_INDEX") {
+            for region in doc.regions() {
+                let pal_len = region.palette().len();
+                let mut changes = Vec::new();
+                for (cp, chunk) in region.chunks() {
+                    for (idx, pal) in chunk.occupied_blocks() {
+                        if (pal.get() as usize) >= pal_len {
+                            if let Some(pos) = cp.block_position_for_index(idx) {
+                                changes.push(schematic_edit::BlockChange::new(
+                                    pos,
+                                    Some(pal),
+                                    None,
+                                ));
+                            }
+                        }
+                    }
+                }
+                fixed += changes.len();
+                patch = patch.merge(schematic_edit::PatchSet::from_changes(
+                    region.id().clone(),
+                    changes,
+                    None,
+                ));
+            }
+        }
+
+        let mut be_changes = Vec::new();
+        for be in doc.block_entities() {
+            let code = match doc.region(&be.region) {
+                None => "WARN_BLOCK_ENTITY_UNKNOWN_REGION",
+                Some(r) => {
+                    let s = r.size();
+                    let p = be.position;
+                    let inside = p.x >= 0
+                        && p.y >= 0
+                        && p.z >= 0
+                        && p.x < s.x as i64
+                        && p.y < s.y as i64
+                        && p.z < s.z as i64;
+                    if !inside {
+                        "WARN_BLOCK_ENTITY_OUTSIDE_REGIONS"
+                    } else if r.block_index_at(p).ok().flatten().is_none() {
+                        "WARN_ORPHAN_BLOCK_ENTITY"
+                    } else {
+                        continue;
+                    }
+                }
+            };
+            if wanted(code) {
+                be_changes.push(schematic_edit::BlockEntityChange {
+                    region: be.region.clone(),
+                    position: be.position,
+                    before: Some(be.clone()),
+                    after: None,
+                });
+            }
+        }
+        let mut entity_changes = Vec::new();
+        if wanted("WARN_ENTITY_UNKNOWN_REGION") {
+            for e in doc.entities().filter(|e| doc.region(&e.region).is_none()) {
+                entity_changes.push(schematic_edit::EntityChange {
+                    before: Some(e.clone()),
+                    after: None,
+                });
+            }
+        }
+        fixed += be_changes.len() + entity_changes.len();
+        let patch = patch.with_entity_changes(be_changes, entity_changes);
+        self.preview_patch(patch, format!("Repair {fixed} problem(s)"))
+    }
+
     /// Generic JSON command channel: `{"cmd": "...", "args": {...}}`.
     /// New engine features are exposed here instead of growing the C-ABI.
     pub fn command(&mut self, request: &[u8]) -> Result<serde_json::Value, String> {
@@ -999,9 +1314,9 @@ impl Session {
         }
         let req: Request =
             serde_json::from_slice(request).map_err(|e| format!("Invalid command: {e}"))?;
-        let to_json = |v: Result<_, String>| -> Result<serde_json::Value, String> {
+        fn to_json<T: Serialize>(v: Result<T, String>) -> Result<serde_json::Value, String> {
             v.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
-        };
+        }
         match req.cmd.as_str() {
             "export_report" => {
                 let target = req
@@ -1011,6 +1326,43 @@ impl Session {
                     .ok_or("export_report requires args.target")?
                     .to_string();
                 to_json(self.export_report(&target))
+            }
+            "region_view" => {
+                let region = req
+                    .args
+                    .get("region")
+                    .and_then(|t| t.as_str())
+                    .ok_or("region_view requires args.region")?
+                    .to_string();
+                to_json(self.region_view(&region))
+            }
+            "take_dirty_chunks" => to_json(Ok(self.take_dirty_chunks())),
+            "list_entities" => to_json(self.list_entities()),
+            "preview_remove_entities" => {
+                let indices: Vec<usize> =
+                    serde_json::from_value(req.args.get("indices").cloned().unwrap_or_default())
+                        .map_err(|e| format!("preview_remove_entities: {e}"))?;
+                to_json(self.preview_remove_entities(&indices))
+            }
+            "preview_move_entity" => {
+                #[derive(Deserialize)]
+                struct A {
+                    index: usize,
+                    delta: [f64; 3],
+                }
+                let a: A = serde_json::from_value(req.args)
+                    .map_err(|e| format!("preview_move_entity: {e}"))?;
+                to_json(self.preview_move_entity(a.index, a.delta))
+            }
+            "preview_fix" => {
+                let codes: Option<Vec<String>> = req
+                    .args
+                    .get("codes")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|e| format!("preview_fix: {e}"))?;
+                to_json(self.preview_fix(codes.as_deref()))
             }
             other => Err(format!("Unknown command '{other}'")),
         }
@@ -1227,13 +1579,6 @@ impl Session {
             ws.committed(),
             false,
         ))
-    }
-
-    pub fn diff_with_litematic(
-        &self,
-        bytes: &[u8],
-    ) -> Result<schematic_diff::DocumentDiff, String> {
-        self.diff_with_bytes(bytes)
     }
 
     pub fn analyze(&self, region_id: Option<&str>) -> Result<AnalysisReport, String> {

@@ -37,6 +37,16 @@ impl EditWorkspace {
         self.pending_preview.is_some()
     }
 
+    /// The patch the next `undo` would revert.
+    pub fn last_undo(&self) -> Option<&PatchSet> {
+        self.undo_stack.last()
+    }
+
+    /// The patch the next `redo` would re-apply.
+    pub fn last_redo(&self) -> Option<&PatchSet> {
+        self.redo_stack.last()
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }

@@ -143,6 +143,17 @@ impl PatchSet {
         }
     }
 
+    /// Combines two patch sets (e.g. edits to several regions). Both must
+    /// have been planned against the same document state and touch disjoint
+    /// blocks.
+    pub fn merge(mut self, other: PatchSet) -> Self {
+        self.patches.extend(other.patches);
+        self.palette_additions.extend(other.palette_additions);
+        self.block_entity_changes.extend(other.block_entity_changes);
+        self.entity_changes.extend(other.entity_changes);
+        self
+    }
+
     /// Attaches block entity and entity changes to this patch set.
     pub fn with_entity_changes(
         mut self,
@@ -179,6 +190,15 @@ impl PatchSet {
                     .find(|a| &a.region_id == region_id && a.index == index)
                     .map(|a| &a.state)
             })
+    }
+
+    /// Palette entries this patch adds, as `(region, index, state)`.
+    pub fn palette_additions(
+        &self,
+    ) -> impl Iterator<Item = (&RegionId, PaletteIndex, &BlockState)> {
+        self.palette_additions
+            .iter()
+            .map(|a| (&a.region_id, a.index, &a.state))
     }
 
     pub fn patches(&self) -> impl Iterator<Item = &Patch> {

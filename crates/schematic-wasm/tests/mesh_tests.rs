@@ -33,10 +33,9 @@ fn load(blocks: &[([i64; 3], &str)], size: Size) -> Session {
 
 /// Decodes the binary stream into (chunk -> faces as [x, y, z, (pal << 3) | dir]).
 fn decode(bytes: &[u8]) -> Vec<([i32; 3], Vec<[i32; 4]>)> {
-    let ints: Vec<i32> = bytes
-        .chunks_exact(4)
-        .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .collect();
+    let (words, rest) = bytes.as_chunks::<4>();
+    assert!(rest.is_empty(), "stream is a whole number of i32 words");
+    let ints: Vec<i32> = words.iter().map(|b| i32::from_le_bytes(*b)).collect();
     let mut out = Vec::new();
     let mut i = 1;
     for _ in 0..ints[0] {

@@ -93,6 +93,9 @@ importers:
 
   packages/renderer:
     dependencies:
+      '@schematic-ide/minecraft-data':
+        specifier: workspace:^
+        version: link:../minecraft-data
       three:
         specifier: ^0.186.1
         version: 0.186.1
@@ -100,24 +103,6 @@ importers:
       '@types/three':
         specifier: ^0.186.0
         version: 0.186.0
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@26.6.4)(jsdom@26.1.0)
-
-  packages/shared:
-    devDependencies:
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@26.6.4)(jsdom@26.1.0)
-
-  packages/ui:
-    devDependencies:
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

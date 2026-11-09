@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getBlockColor } from './colorMap';
+import { getBlockColor } from '@schematic-ide/minecraft-data';
 
 export { getBlockColor };
 

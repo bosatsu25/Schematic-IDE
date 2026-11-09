@@ -26,7 +26,8 @@ A local-first, browser-based IDE for Minecraft structures.
 
 - `apps/web` — browser application shell (React, Vite, Three.js, Web Worker)
 - `crates/*` — Rust core, format, validation, edit, analysis, and WASM crates
-- `packages/*` — renderer, Minecraft data, UI, and shared libraries
+- `packages/renderer` — Three.js voxel renderer
+- `packages/minecraft-data` — Minecraft data tables (block colors, DataVersion → game version labels)
 - `docs/` — requirements, architecture, ADRs, roadmap, gap analysis, and migrations
 - `tests/` — fixtures and verification suites
 

@@ -70,11 +70,11 @@ crates/
   schematic-edit/
   schematic-validate/
   schematic-wasm/
+  schematic-diff/
+  schematic-analysis/
 packages/
-  renderer/
-  minecraft-data/
-  ui/
-  shared/
+  renderer/        # Three.js voxel renderer (depends on minecraft-data)
+  minecraft-data/  # block color map, DataVersion -> game version labels
 tests/
   fixtures/
   roundtrip/

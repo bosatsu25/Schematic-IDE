@@ -15,11 +15,10 @@
 #![allow(dead_code)]
 
 use schematic_core::{
-    BlockPosition, BlockProperty, BlockState, Document, DocumentMetadata, Position, Region,
-    RegionId, Size,
+    BlockEntityRef, BlockPosition, BlockProperty, BlockState, Document, DocumentMetadata,
+    NbtCompound, NbtTag, Position, Region, RegionId, Size,
 };
-use schematic_format::{LitematicDocument, NbtTag, RawRegionData};
-use std::collections::BTreeMap;
+use schematic_format::LitematicDocument;
 use std::time::Instant;
 
 /// Name of the single region in every generated fixture.
@@ -196,14 +195,15 @@ fn hash3(x: u32, y: u32, z: u32, salt: u64) -> u64 {
     splitmix64(((x as u64) | ((y as u64) << 21) | ((z as u64) << 42)) ^ salt)
 }
 
-fn block_entity_tag(id: &str, x: u32, y: u32, z: u32) -> NbtTag {
-    let mut map = BTreeMap::new();
-    map.insert("id".to_string(), NbtTag::String(id.to_string()));
-    map.insert("x".to_string(), NbtTag::Int(x as i32));
-    map.insert("y".to_string(), NbtTag::Int(y as i32));
-    map.insert("z".to_string(), NbtTag::Int(z as i32));
-    map.insert("Items".to_string(), NbtTag::List(10, Vec::new()));
-    NbtTag::Compound(map)
+fn container_block_entity(region: &RegionId, id: &str, x: u32, y: u32, z: u32) -> BlockEntityRef {
+    let mut data = NbtCompound::new();
+    data.insert("Items".to_string(), NbtTag::List(10, Vec::new()));
+    BlockEntityRef::new(
+        region.clone(),
+        id,
+        BlockPosition::new(x as i64, y as i64, z as i64),
+    )
+    .with_data(data)
 }
 
 /// Build a dense document for `scale` and export it to `.litematic` bytes.
@@ -252,7 +252,7 @@ pub fn generate(scale: Scale) -> DenseFixture {
                 let variant = h >> 32;
                 let idx = if variant.is_multiple_of(BLOCK_ENTITY_EVERY) {
                     let (idx, id) = containers[(variant / BLOCK_ENTITY_EVERY) as usize % 3];
-                    block_entities.push(block_entity_tag(id, x, y, z));
+                    block_entities.push(container_block_entity(&region_id, id, x, y, z));
                     idx
                 } else if variant % 8 == 1 {
                     structural[(variant >> 8) as usize % structural.len()]
@@ -268,22 +268,13 @@ pub fn generate(scale: Scale) -> DenseFixture {
         }
     }
     doc.insert_region(region);
+    let block_entity_count = block_entities.len();
+    for be in block_entities {
+        doc.add_block_entity(be);
+    }
     let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
 
-    let block_entity_count = block_entities.len();
-    let mut litematic = LitematicDocument::from_document(doc, 2975);
-    litematic.raw_regions.insert(
-        region_id,
-        RawRegionData {
-            original_pos: [0, 0, 0],
-            original_size: [width as i32, height as i32, length as i32],
-            block_entities,
-            entities: Vec::new(),
-            pending_block_ticks: None,
-            pending_fluid_ticks: None,
-            unknown_tags: BTreeMap::new(),
-        },
-    );
+    let litematic = LitematicDocument::from_document(doc, 2975);
 
     let export_start = Instant::now();
     let bytes = litematic.export(&litematic.document).unwrap();

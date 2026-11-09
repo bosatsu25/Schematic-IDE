@@ -105,7 +105,8 @@ async function runBench(opts: BenchOptions): Promise<BenchResults> {
 
   // 2b. Binary face-culled mesh (`schematic_region_faces`), when the wasm
   //     build has it. Stream: i32 LE [chunk_count, per chunk: cx, cy, cz, n,
-  //     then n x (x, y, z, (palette << 3) | dir)].
+  //     then n packed u32 faces].
+  let faceBuffer: ArrayBuffer | null = null;
   if (typeof ex.schematic_region_faces === 'function') {
     const args = new TextEncoder().encode(JSON.stringify({ region: opts.regionName }));
     t0 = now();
@@ -121,7 +122,8 @@ async function runBench(opts: BenchOptions): Promise<BenchResults> {
       throw new Error(`schematic_region_faces failed: ${err.slice(0, 200)}`);
     }
     // Copy out of wasm memory (what a worker would transfer to the main thread).
-    const faces = new Int32Array(ex.memory.buffer.slice(fptr, fptr + flen));
+    faceBuffer = ex.memory.buffer.slice(fptr, fptr + flen);
+    const faces = new Int32Array(faceBuffer);
     const tCopy = now();
     let faceCount = 0;
     const chunkCount = faces[0];
@@ -129,7 +131,7 @@ async function runBench(opts: BenchOptions): Promise<BenchResults> {
     for (let c = 0; c < chunkCount; c++) {
       const n = faces[i + 3];
       faceCount += n;
-      i += 4 + n * 4;
+      i += 4 + n;
     }
     record(results, 'faces_wasm_ms', tFacesWasm - t0);
     record(results, 'faces_copy_ms', tCopy - tFacesWasm);
@@ -147,7 +149,7 @@ async function runBench(opts: BenchOptions): Promise<BenchResults> {
   void cloned;
 
   // 4. Render the region with the production VoxelRenderer.
-  if (opts.render) {
+  if (opts.render && faceBuffer) {
     const canvas = document.getElementById('bench-canvas') as HTMLCanvasElement;
     t0 = now();
     const renderer = new VoxelRenderer(canvas);
@@ -170,13 +172,18 @@ async function runBench(opts: BenchOptions): Promise<BenchResults> {
     const cy = Math.floor(canvas.height / 2);
 
     t0 = now();
-    renderer.renderRegion({
-      origin: mesh.origin,
-      size: mesh.size,
-      palette: mesh.palette,
-      blocks: mesh.blocks,
-      preview_diff: mesh.preview_diff,
-    });
+    // Same path as the app: face-culled chunk meshes.
+    renderer.updateRegion(
+      {
+        region_id: opts.regionName,
+        origin: mesh.origin,
+        size: mesh.size,
+        palette: mesh.palette,
+        preview_positions: [],
+      },
+      faceBuffer,
+      true,
+    );
     const tSubmit = now();
     // readPixels blocks until the GPU (SwiftShader in headless) has finished.
     gl?.readPixels(cx, cy, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);

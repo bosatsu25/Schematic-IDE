@@ -31,6 +31,12 @@ struct ScaleReport {
     mesh_ms: f64,
     mesh_json_ms: f64,
     mesh_json_bytes: usize,
+    view_ms: f64,
+    faces_ms: f64,
+    faces_bytes: usize,
+    face_chunks: usize,
+    face_count: usize,
+    faces_peak_mb: Option<f64>,
     inspect_ms: f64,
     validate_ms: f64,
     analyze_ms: f64,
@@ -51,6 +57,7 @@ struct Budget {
     load_ms: f64,
     mesh_ms: f64,
     mesh_json_ms: f64,
+    faces_ms: f64,
     analyze_ms: f64,
     edit_ms: f64,
     undo_ms: f64,
@@ -94,6 +101,22 @@ fn fmt_mb(mb: Option<f64>) -> String {
         .unwrap_or_else(|| "n/a".to_string())
 }
 
+/// Parse the `region_faces` stream header: i32 LE `[chunk_count, per chunk:
+/// cx, cy, cz, n, then n packed u32 faces]`. Returns `(chunk_count, total_faces)`.
+fn decode_face_counts(bytes: &[u8]) -> (usize, usize) {
+    let word = |i: usize| i32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
+    let chunks = word(0) as usize;
+    let mut faces = 0usize;
+    let mut i = 1;
+    for _ in 0..chunks {
+        let n = word(i + 3) as usize;
+        faces += n;
+        i += 4 + n;
+    }
+    assert_eq!(i * 4, bytes.len(), "face stream length mismatch");
+    (chunks, faces)
+}
+
 fn run_pipeline(fixture: &DenseFixture) -> ScaleReport {
     let Scale {
         width,
@@ -121,6 +144,17 @@ fn run_pipeline(fixture: &DenseFixture) -> ScaleReport {
     let mesh_json_bytes = session.response_buffer().len();
     drop(mesh);
     session.set_json_response(&());
+
+    // 3b. The binary face-culled mesh the renderer now uses: region metadata
+    //     (`region_view`) plus every chunk's exposed faces (`region_faces`).
+    reset_peak_rss();
+    let (_, view_ms) = time(|| session.region_view(REGION_NAME).unwrap());
+    let (faces, faces_ms) = time(|| session.region_faces(REGION_NAME, None).unwrap());
+    let faces_peak_mb = peak_rss_mb();
+    let (face_chunks, face_count) = decode_face_counts(&faces);
+    assert!(face_count > 0);
+    let faces_bytes = faces.len();
+    drop(faces);
 
     // 4. Panels the web app computes right after load (inspector, problems,
     //    analysis).
@@ -150,6 +184,7 @@ fn run_pipeline(fixture: &DenseFixture) -> ScaleReport {
                 selection: Some(SelectionBounds {
                     min: [0, 0, 0],
                     max: [(width / 2) as i32, (height / 2) as i32, (length / 2) as i32],
+                    ..Default::default()
                 }),
             })
             .unwrap();
@@ -185,6 +220,12 @@ fn run_pipeline(fixture: &DenseFixture) -> ScaleReport {
         mesh_ms,
         mesh_json_ms,
         mesh_json_bytes,
+        view_ms,
+        faces_ms,
+        faces_bytes,
+        face_chunks,
+        face_count,
+        faces_peak_mb,
         inspect_ms,
         validate_ms,
         analyze_ms,
@@ -219,6 +260,9 @@ fn print_report(fixture: &DenseFixture, r: &ScaleReport) {
          \x20 Load (parse):      {load:.1} ms\n\
          \x20 Mesh extraction:   {mesh:.1} ms\n\
          \x20 Mesh JSON:         {mjson:.1} ms -> {mbytes:.1} MiB\n\
+         \x20 region_view:       {view:.1} ms\n\
+         \x20 region_faces:      {faces:.1} ms -> {fbytes:.1} MiB, {fcount} faces in {fchunks} chunks \
+         ({fpb:.2} faces/block, peak RSS {rfaces})\n\
          \x20 Inspect / Validate: {insp:.1} / {val:.1} ms\n\
          \x20 Analyze:           {ana:.1} ms (surface + feature pass alone: {surf:.1} ms)\n\
          \x20 Replace+commit:    {edit:.1} ms ({changed} blocks changed)\n\
@@ -241,6 +285,13 @@ fn print_report(fixture: &DenseFixture, r: &ScaleReport) {
         mesh = r.mesh_ms,
         mjson = r.mesh_json_ms,
         mbytes = r.mesh_json_bytes as f64 / (1024.0 * 1024.0),
+        view = r.view_ms,
+        faces = r.faces_ms,
+        fbytes = r.faces_bytes as f64 / (1024.0 * 1024.0),
+        fcount = r.face_count,
+        fchunks = r.face_chunks,
+        fpb = r.face_count as f64 / fixture.occupied_blocks as f64,
+        rfaces = fmt_mb(r.faces_peak_mb),
         insp = r.inspect_ms,
         val = r.validate_ms,
         ana = r.analyze_ms,
@@ -266,6 +317,7 @@ fn check_budget(name: &str, r: &ScaleReport, b: &Budget) {
         ("load", r.load_ms, b.load_ms),
         ("mesh", r.mesh_ms, b.mesh_ms),
         ("mesh JSON", r.mesh_json_ms, b.mesh_json_ms),
+        ("region_faces", r.faces_ms, b.faces_ms),
         ("analyze", r.analyze_ms, b.analyze_ms),
         ("replace+commit", r.edit_ms, b.edit_ms),
         ("undo", r.undo_ms, b.undo_ms),
@@ -320,6 +372,7 @@ fn scale_01m_dense() {
             load_ms: 1_000.0,
             mesh_ms: 1_500.0,
             mesh_json_ms: 500.0,
+            faces_ms: 1_500.0,
             analyze_ms: 30_000.0,
             edit_ms: 500.0,
             undo_ms: 250.0,
@@ -337,6 +390,7 @@ fn scale_05m_dense() {
             load_ms: 3_000.0,
             mesh_ms: 9_000.0,
             mesh_json_ms: 1_500.0,
+            faces_ms: 6_000.0,
             analyze_ms: 150_000.0,
             edit_ms: 1_000.0,
             undo_ms: 250.0,
@@ -354,6 +408,7 @@ fn scale_10m_dense() {
             load_ms: 6_000.0,
             mesh_ms: 20_000.0,
             mesh_json_ms: 3_000.0,
+            faces_ms: 15_000.0,
             analyze_ms: 300_000.0,
             edit_ms: 2_000.0,
             undo_ms: 250.0,

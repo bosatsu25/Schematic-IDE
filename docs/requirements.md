@@ -15,29 +15,26 @@ This repository intentionally avoids copying another implementation's source cod
 - Select regions / blocks / entities / block entities
 - Fill, replace, delete, and transform sections
 - Inspect metadata, block state, and NBT details
-- Validate and repair correctness issues
+- Validate and repair correctness issues (automatic, undoable fixes)
 - Compare different versions or regions via diff tools
 - Export normalized or converted files
 
 ## v1.0 Definition of Done
 
-See [docs/v1-gap-analysis.md](./v1-gap-analysis.md) for detailed item-by-item status, evidence, and remaining deliverables.
+Status, evidence and remaining gaps per item are tracked in
+[docs/v1-gap-analysis.md](./v1-gap-analysis.md). An item is DONE only when it is
+implemented, covered by automated tests, and has no open gap.
 
-- [DONE] **Web/PWA app launches locally in browser**: Local Web app launches and runs in browser; PWA manifest, installable icons, and offline service worker caching shell verified (Wave 8G).
-- [DONE] **Supports `.litematic`, `.schem`, and Java Structure NBT**: All three formats supported with lossless parse/export, cross-format diff, and auto-detection (PR #7, PR #16).
-- [DONE] **Enables open, view, select, fill, replace, delete, copy, paste, move, rotate, mirror, undo, redo, inspect, analyze, validate, diff, and export**:
-  - Open, view, select, replace, delete, undo, redo, cleanup analysis, export, inspect, validate: **DONE**
-  - Fill, copy, paste, move, rotate, mirror: **DONE** (Wave 8B)
-  - Diff: **DONE** (Wave 8C)
-  - Multi-format: **DONE** (Wave 8D)
-  - Material & structural analysis: **DONE** (Wave 8E)
-- [DONE] **Keeps structure data local-first**: Runs entirely in the user's browser client and WASM runtime; zero server upload or telemetry.
-- [DONE] **Includes round-trip and property tests**: Complete round-trip suites for `.litematic`, `.schem`, `.nbt`, and proptest suites for 4x rotation and 2x mirror inverse properties.
-- [DONE] **Includes E2E coverage for a practical editing workflow**: Playwright E2E browser tests pass on Chromium in CI (PR #11, PR #13–#17).
-- [DONE] **Includes large-structure performance tests**: Performance benchmark suite at 1M, 5M, and 10M blocks implemented in `crates/schematic-wasm/tests/scale_benchmarks.rs` and documented in `docs/benchmarks.md` (Wave 8F).
-- [DONE] **CI stays green**: GitHub Actions runs format, clippy, unit tests, frontend checks, and browser E2E tests cleanly on all commits.
-- [DONE] **Architecture and README remain aligned with implementation**: Updated and maintained continuously.
-- [DONE] **No material silent data-loss issues are introduced**: NBT preservation, negative bounds preservation, unknown tag passthrough verified.
+- [DONE] **Web/PWA app launches locally in browser**: manifest, installable icons, build-time versioned offline precache, verified offline by E2E.
+- [PARTIAL] **Supports `.litematic`, `.schem`, and Java Structure NBT**: all three read and write block entity / entity payloads. Sponge v1–v3 is supported. Negative-size Litematica regions are not yet verified against a real file (#37).
+- [PARTIAL] **Enables open, view, select, fill, replace, delete, copy, paste, move, rotate, mirror, undo, redo, inspect, analyze, validate, diff, and export**: every operation is implemented, with drag & drop, viewport picking, multi-region display, entity editing, repair and cross-format diff. Analysis is slow on very large structures (#36).
+- [DONE] **Keeps structure data local-first**: everything runs in the browser and WASM; nothing is uploaded and there is no telemetry.
+- [DONE] **Includes round-trip and property tests**: format and cross-format round trips include block entity / entity payloads and multi-region flattening; proptests cover rotation/mirror identities.
+- [DONE] **Includes E2E coverage for a practical editing workflow**: three Playwright specs (editing lifecycle, IDE features on a multi-region document, offline PWA).
+- [PARTIAL] **Includes large-structure performance tests**: dense 1M/5M/10M fixtures, native release benchmarks and a browser harness; results and bottlenecks are in [docs/benchmarks.md](./benchmarks.md) (#36, #38).
+- [DONE] **CI stays green**: Rust fmt/clippy/tests, WASM built from source, frontend checks, Playwright dev + preview projects.
+- [DONE] **Architecture and README remain aligned with implementation**: reconciled in #34.
+- [DONE] **No material silent data-loss issues are introduced**: payloads follow edits and survive every format; multi-region export flattens instead of truncating; lossy conversions require confirmation.
 
 ## Non-goals for Phase 0
 

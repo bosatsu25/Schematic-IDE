@@ -13,7 +13,48 @@ real app UI.
 > comparable or faster execution", have been removed. Everything below was
 > re-measured on dense fixtures.
 
-## TL;DR
+## Current app: face-culled chunk renderer (#27)
+
+The sections after this one were measured **before** #27, with the old
+renderer (one instanced cube per block, JSON mesh). The app now renders
+face-culled per-chunk meshes from a packed binary stream (one `u32` per face).
+Each mesh holds `Uint8` chunk-local positions; colors are released after GPU
+upload. Re-measured on 2026-11-09 with the same dense 55%-fill fixtures, the
+same container (4 vCPU, no GPU) and Chromium headless on SwiftShader:
+
+| | 1M before | 1M now | 10M before | 10M now |
+|---|---:|---:|---:|---:|
+| Mesh transfer (worker → main) | 6.0 MiB JSON + clone | 7.5 MiB binary, transferred | 68.8 MiB JSON + clone | 74.8 MiB binary, transferred |
+| Engine: first frame presented | 9.9 s | **0.47 s** | 95 s | **4.2 s** |
+| Engine: main JS heap after render | 87 MiB | 106 MiB | 782 MiB | 923 MiB |
+| Engine: steady-state single frame (SwiftShader) | — | 6.7 s | — | 61 s |
+| App: idle after opening the file | 13.8 s | **7.7 s** | 145.5 s | **70 s** |
+| App: renderer process peak RSS | 620 MiB | **307 MiB** | 4.3 GB | **1.4 GB** |
+| App: analysis on load | 3.9 s | **0 (lazy)** | 49.5 s | **0 (lazy)** |
+| Native `region_faces` | — | 150 ms | — | 1.7 s |
+
+Notes:
+
+- The binary stream is slightly larger than the JSON on this fixture, because
+  random 55% noise leaves 3.56 visible faces per block. It needs no encode,
+  parse or structured clone, and is transferred rather than copied. Builds with
+  solid interiors expose far fewer faces.
+- In app mode, the worker replies after load (`INSPECT_DOCUMENT`,
+  `VALIDATE_DOCUMENT`) appear to take 3–35 s. That time is the main thread
+  blocked by SwiftShader frames, not the worker: natively both calls take
+  under 125 ms at 10M (table below).
+- Rendering is now triangle-bound: 3.9M triangles at 1M and 39M at 10M. On a
+  CPU rasterizer that means seconds per frame. Greedy meshing / LOD and a
+  hardware-GPU measurement are tracked in #38. Analysis itself is still slow
+  when the Analysis tab is opened (#36).
+- An intermediate build that stored Float32 positions, normals and colors
+  reached 352 MiB (1M) / 3.4 GiB (10M) of main heap. That led to the compact
+  `Uint8` layout above.
+
+Reproduce: `pnpm --filter @schematic-ide/web bench:browser -- --scales 1m,10m`
+and `cargo test --release -p schematic-wasm --test scale_benchmarks -- --ignored --nocapture --test-threads=1`.
+
+## TL;DR (measured before #27)
 
 - **Parsing and editing scale fine.** Loading 10M voxels with 5.5M occupied
   blocks takes 0.6 s natively and 0.9 s in WASM. Bounded replace, undo and
@@ -31,10 +72,10 @@ real app UI.
 - **The JSON mesh is heavy.** The mesh is 6 / 33 / 69 MiB of JSON. Parsing,
   structured-cloning and per-block JS objects push the main-thread JS heap to
   87 / 344 / 782 MiB after the first render.
-- **The new binary face mesh (`region_faces`) culls about 41% of faces but
-  is 4-5x larger than the JSON.** It is 30 / 150 / 299 MiB at 16 bytes per
-  face. The stream needs tighter packing before it scales; see the face-mesh
-  section.
+- **The first binary face mesh (`region_faces`) culled about 41% of faces but
+  was 4-5x larger than the JSON**, at 16 bytes per face (30 / 150 / 299 MiB).
+  It now packs one `u32` per face (7.5 MiB at 1M, 74.8 MiB at 10M); see the
+  section above.
 - **10M does load in the browser**, but slowly. In app mode the tab's
   renderer process peaked at 4.3 GB of RSS, and the app became idle 145 s
   after the file was opened, on software GL.
@@ -193,10 +234,11 @@ while the main thread is blocked by the first frame.
 
 ## Results: binary face mesh (`region_faces`)
 
-The renderer is moving from the JSON `get_region_mesh` block array to
-`Session::region_view` plus `Session::region_faces`, a face-culled binary
-stream. The stream is little-endian `i32`:
-`[chunk_count, per chunk: cx, cy, cz, n, then n × (x, y, z, (palette << 3) | dir)]`.
+*Historical: this measured the first, unpacked encoding (16 bytes per face).
+The shipped stream packs one `u32` per face, as the last bullet below
+proposed: `[chunk_count, per chunk: cx, cy, cz, n, then n packed u32]`, with
+bits 0–11 the in-chunk x/y/z, 12–14 the direction and 15–31 the palette
+index.*
 
 These numbers were measured on the same fixtures with a snapshot of `main`'s
 in-progress sources, taken 2026-11-09 before that API was committed. Native

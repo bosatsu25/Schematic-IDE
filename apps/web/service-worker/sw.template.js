@@ -19,8 +19,12 @@ const PRECACHE_URLS = /* __SW_PRECACHE_URLS__ */ [];
 
 const CACHE_PREFIX = 'schematic-ide-';
 const CACHE_NAME = `${CACHE_PREFIX}${BUILD_HASH}`;
-const APP_SHELL_URL = '/index.html';
-const PRECACHED = new Set(PRECACHE_URLS);
+// PRECACHE_URLS are relative to this script, so the build can be hosted at a
+// domain root or under any sub-path.
+const BASE_URL = new URL('./', self.location.href);
+const toAbsolute = (relative) => new URL(relative, BASE_URL).href;
+const APP_SHELL_URL = toAbsolute('index.html');
+const PRECACHED = new Set(PRECACHE_URLS.map(toAbsolute));
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -29,7 +33,9 @@ self.addEventListener('install', (event) => {
       .then((cache) =>
         // `cache: 'reload'` bypasses the HTTP cache so we never store a stale
         // file from a previous deploy under this build's cache.
-        cache.addAll(PRECACHE_URLS.map((url) => new Request(url, { cache: 'reload' }))),
+        cache.addAll(
+          PRECACHE_URLS.map((url) => new Request(toAbsolute(url), { cache: 'reload' })),
+        ),
       ),
   );
 });
@@ -62,10 +68,12 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  // Ignore query and fragment when matching build files.
+  const href = url.origin + url.pathname;
   let cacheKey = null;
-  if (PRECACHED.has(url.pathname)) {
-    cacheKey = url.pathname;
-  } else if (request.mode === 'navigate') {
+  if (PRECACHED.has(href)) {
+    cacheKey = href;
+  } else if (request.mode === 'navigate' && href.startsWith(BASE_URL.href)) {
     // Single-page app: every navigation gets this build's app shell.
     cacheKey = APP_SHELL_URL;
   }

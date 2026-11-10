@@ -131,6 +131,46 @@ export interface EditorState {
 export const useSchematicStore = create<EditorState>((set, get) => {
   const client = new SchematicWorkerClient();
 
+  const emptyStatus: SessionStatus = {
+    loaded: false,
+    has_preview: false,
+    can_undo: false,
+    can_redo: false,
+    is_dirty: false,
+  };
+
+  // If the engine crashes it restarts empty: drop every trace of the document
+  // so the UI cannot keep editing something that no longer exists.
+  client.onEngineReset = (message: string) => {
+    set({
+      document: null,
+      selectedRegionId: null,
+      meshData: null,
+      regionViews: {},
+      renderQueue: [],
+      renderSeq: get().renderSeq + 1,
+      hiddenRegions: {},
+      selection: null,
+      selectionAnchor: null,
+      status: emptyStatus,
+      previewSummary: null,
+      inspection: null,
+      docInspection: null,
+      diagnostics: [],
+      entities: [],
+      blockEntities: [],
+      selectedEntity: null,
+      clipboardCount: null,
+      currentDiff: null,
+      diffMode: false,
+      selectedDiff: null,
+      analysisReport: null,
+      pendingExport: null,
+      loading: false,
+      error: message,
+    });
+  };
+
   /** Runs a preview-producing engine call and refreshes the view. */
   const runPreview = async (call: () => Promise<PreviewSummary>) => {
     set({ loading: true, error: null });
@@ -184,7 +224,13 @@ export const useSchematicStore = create<EditorState>((set, get) => {
 
     init: async () => {
       try {
-        await client.init();
+        // Resolve against the page so the app works when hosted under a
+        // sub-path (the worker cannot see the document base URL).
+        const wasmUrl =
+          typeof document !== 'undefined'
+            ? new URL('schematic_wasm.wasm', document.baseURI).href
+            : undefined;
+        await client.init(wasmUrl);
       } catch (err: unknown) {
         console.error('Failed to initialize worker:', err);
       }

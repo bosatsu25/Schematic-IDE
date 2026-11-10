@@ -731,3 +731,61 @@ fn test_export_multi_region_e2e_fixture() {
         std::fs::write(dest.join("multi_region.litematic"), bytes).unwrap();
     }
 }
+
+/// Issue #36: surface analysis is skipped above the block limit (it would
+/// exhaust WASM memory), while materials stay exact.
+#[test]
+fn analysis_skips_surface_pass_for_very_large_regions() {
+    use schematic_wasm::SURFACE_ANALYSIS_MAX_BLOCKS;
+    let mut doc = Document::new(DocumentMetadata {
+        name: Some("Big".into()),
+        ..Default::default()
+    });
+    let mut region = Region::new(
+        RegionId::new("Main"),
+        Position::new(0, 0, 0),
+        Size::new(100, 64, 100),
+    );
+    let stone = region
+        .palette_mut()
+        .intern(BlockState::new("minecraft:stone", []).unwrap())
+        .unwrap();
+    let dirt = region
+        .palette_mut()
+        .intern(BlockState::new("minecraft:dirt", []).unwrap())
+        .unwrap();
+    let mut placed = 0usize;
+    'fill: for y in 0..64 {
+        for z in 0..100 {
+            for x in 0..100 {
+                let idx = if y == 0 { dirt } else { stone };
+                region
+                    .set_block_index(BlockPosition::new(x, y, z), Some(idx))
+                    .unwrap();
+                placed += 1;
+                if placed == SURFACE_ANALYSIS_MAX_BLOCKS + 1 {
+                    break 'fill;
+                }
+            }
+        }
+    }
+    doc.insert_region(region);
+    let lit = LitematicDocument::from_document(doc, 3465);
+    let mut session = Session::new();
+    session
+        .load_schematic(&lit.export(&lit.document).unwrap())
+        .unwrap();
+
+    let report = session.analyze(None).unwrap();
+    assert!(report.statistics.surface_analysis_skipped);
+    assert_eq!(report.statistics.surface_cell_count, 0);
+    assert_eq!(report.statistics.non_air_blocks, placed);
+    let dirt_count = report
+        .materials
+        .iter()
+        .find(|m| m.id == "minecraft:dirt")
+        .unwrap()
+        .count;
+    assert_eq!(dirt_count, 10_000);
+    assert_eq!(report.materials[0].count, placed - 10_000);
+}

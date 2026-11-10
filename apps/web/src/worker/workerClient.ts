@@ -34,6 +34,8 @@ export class SchematicWorkerClient {
     { resolve: (data: any) => void; reject: (err: Error) => void }
   >();
   private messageCounter = 0;
+  /** Called when the engine crashed and restarted (the session is gone). */
+  onEngineReset?: (message: string) => void;
 
   constructor(worker?: Worker) {
     if (worker) {
@@ -53,7 +55,10 @@ export class SchematicWorkerClient {
     }
 
     this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
-      const { id, ok, data, error } = e.data;
+      const { id, ok, data, error, engineReset } = e.data;
+      if (engineReset) {
+        this.onEngineReset?.(error || 'The engine was restarted.');
+      }
       const handlers = this.pending.get(id);
       if (handlers) {
         this.pending.delete(id);

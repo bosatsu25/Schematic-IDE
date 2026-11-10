@@ -944,11 +944,15 @@ export const Sidebar: React.FC = () => {
                       </span>
                     ),
                   )}
-                  {Object.keys(analysisReport.statistics.feature_counts).length ===
-                    0 && (
-                    <span className="text-muted text-xs">
-                      No surface features detected
+                  {analysisReport.statistics.surface_analysis_skipped ? (
+                    <span className="text-muted text-xs" data-testid="surface-analysis-skipped">
+                      Surface analysis is skipped for regions over 500,000 blocks. Materials and
+                      counts above are exact.
                     </span>
+                  ) : (
+                    Object.keys(analysisReport.statistics.feature_counts).length === 0 && (
+                      <span className="text-muted text-xs">No surface features detected</span>
+                    )
                   )}
                 </div>
               </div>

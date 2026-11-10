@@ -15,8 +15,12 @@ test.describe('Offline PWA shell (production build)', () => {
   }) => {
     // 1. First (online) visit installs and activates the service worker,
     //    which precaches the whole build and then claims this page.
-    await page.goto('/');
+    // Relative to the project's baseURL, which is a sub-path of the server.
+    await page.goto('./');
+    const base = new URL(page.url()).pathname;
+    expect(base).toBe('/schematic-ide/');
     await expect(page.locator('.app-title')).toHaveText('Schematic IDE');
+    await expect(page.getByTestId('app-version')).toHaveText(/^v\d+\.\d+\.\d+/);
     await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
 
@@ -29,11 +33,12 @@ test.describe('Offline PWA shell (production build)', () => {
     });
     expect(cacheState.names).toHaveLength(1);
     expect(cacheState.names[0]).toMatch(/^schematic-ide-[0-9a-f]{16}$/);
-    expect(cacheState.urls).toContain('/index.html');
-    expect(cacheState.urls).toContain('/schematic_wasm.wasm');
-    expect(cacheState.urls).toContain('/sample.litematic');
-    expect(cacheState.urls.some((u) => /^\/assets\/index-.*\.js$/.test(u))).toBe(true);
-    expect(cacheState.urls.some((u) => /^\/assets\/schematic\.worker-.*\.js$/.test(u))).toBe(true);
+    const cached = cacheState.urls.map((u) => (u.startsWith(base) ? u.slice(base.length) : u));
+    expect(cached).toContain('index.html');
+    expect(cached).toContain('schematic_wasm.wasm');
+    expect(cached).toContain('sample.litematic');
+    expect(cached.some((u) => /^assets\/index-.*\.js$/.test(u))).toBe(true);
+    expect(cached.some((u) => /^assets\/schematic\.worker-.*\.js$/.test(u))).toBe(true);
 
     // 2. Go offline and reload: the app shell must come from the cache.
     await context.setOffline(true);
@@ -44,7 +49,7 @@ test.describe('Offline PWA shell (production build)', () => {
 
     // Sanity check: the network really is down for anything not precached.
     const uncachedFetch = await page.evaluate(() =>
-      fetch('/not-precached.txt').then(
+      fetch('not-precached.txt').then(
         () => 'reachable',
         () => 'offline',
       ),
@@ -53,7 +58,7 @@ test.describe('Offline PWA shell (production build)', () => {
 
     // The bundled sample is served from the precache while offline.
     const sampleBytes = await page.evaluate(async () => {
-      const res = await fetch('/sample.litematic');
+      const res = await fetch('sample.litematic');
       return res.ok ? (await res.arrayBuffer()).byteLength : -1;
     });
     const fixturePath = path.resolve(__dirname, '../public/sample.litematic');

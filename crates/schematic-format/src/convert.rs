@@ -56,6 +56,12 @@ pub fn merge_regions(doc: &Document) -> Result<MergedDocument, FormatError> {
         to_u32(max[1] - min[1])?,
         to_u32(max[2] - min[2])?,
     );
+    if crate::litematic::region_volume(size.x, size.y, size.z).is_none() {
+        return Err(FormatError::InvalidStructure(format!(
+            "regions are too far apart to merge into one volume ({}x{}x{})",
+            size.x, size.y, size.z
+        )));
+    }
     let merged_id = RegionId::new("Main");
     let mut merged = Region::new(merged_id.clone(), origin, size);
     let mut overlap_conflicts = 0usize;
@@ -241,7 +247,13 @@ pub fn conversion_report(
     let single_volume = matches!(target, ExportTarget::Sponge | ExportTarget::Structure);
 
     if single_volume && doc.regions().count() > 1 {
-        let merged = merge_regions(doc)?;
+        let merged = match merge_regions(doc) {
+            Ok(merged) => merged,
+            Err(e) => {
+                push("VOLUME_LIMIT", LossSeverity::Error, e.to_string());
+                return Ok(ConversionReport { target, losses });
+            }
+        };
         push(
             "REGIONS_MERGED",
             LossSeverity::Warning,
@@ -354,6 +366,22 @@ fn check_dimensions(
     size: Size,
     push: &mut impl FnMut(&str, LossSeverity, String),
 ) {
+    let volume = (size.x as u64)
+        .saturating_mul(size.y as u64)
+        .saturating_mul(size.z as u64);
+    if target == ExportTarget::Structure && volume > crate::STRUCTURE_MAX_EXPORT_VOLUME {
+        push(
+            "VOLUME_LIMIT",
+            LossSeverity::Error,
+            format!(
+                "Structure NBT export is limited to {} blocks; this volume is {}x{}x{} ({volume} blocks)",
+                crate::STRUCTURE_MAX_EXPORT_VOLUME,
+                size.x,
+                size.y,
+                size.z
+            ),
+        );
+    }
     let limit = crate::sponge::SPONGE_MAX_DIMENSION;
     if target == ExportTarget::Sponge && (size.x > limit || size.y > limit || size.z > limit) {
         push(

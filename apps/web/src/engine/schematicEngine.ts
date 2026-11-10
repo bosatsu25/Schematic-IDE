@@ -248,6 +248,8 @@ export interface StructureStatistics {
   surface_cell_count: number;
   island_count: number;
   feature_counts: Record<string, number>;
+  /** Surface/feature analysis was skipped (structure too large); see issue #36. */
+  surface_analysis_skipped?: boolean;
 }
 
 export interface AnalysisReport {

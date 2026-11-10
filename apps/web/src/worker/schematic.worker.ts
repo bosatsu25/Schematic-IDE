@@ -12,7 +12,24 @@ import {
 } from '../engine/schematicEngine';
 
 const engine = new SchematicEngine();
-let isInitialized = false;
+let wasmUrl: string | undefined;
+let initPromise: Promise<void> | null = null;
+
+/** Instantiates the engine once; concurrent callers share the same promise. */
+function ensureInit(): Promise<void> {
+  if (!initPromise) {
+    initPromise = engine.init(wasmUrl).catch((err) => {
+      initPromise = null;
+      throw err;
+    });
+  }
+  return initPromise;
+}
+
+/** A trap inside WASM (panic, out of memory) leaves the instance unusable. */
+function isEngineCrash(err: unknown): boolean {
+  return typeof WebAssembly !== 'undefined' && err instanceof WebAssembly.RuntimeError;
+}
 
 export type WorkerMessage =
   | { id: string; type: 'INIT'; wasmUrl?: string }
@@ -48,6 +65,8 @@ export interface WorkerResponse {
   ok: boolean;
   data?: unknown;
   error?: string;
+  /** The engine crashed and was restarted: the open document is gone. */
+  engineReset?: boolean;
 }
 
 self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
@@ -55,18 +74,13 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
   try {
     switch (msg.type) {
       case 'INIT': {
-        if (!isInitialized) {
-          await engine.init(msg.wasmUrl);
-          isInitialized = true;
-        }
+        if (msg.wasmUrl) wasmUrl = msg.wasmUrl;
+        await ensureInit();
         self.postMessage({ id: msg.id, ok: true, data: { initialized: true } });
         break;
       }
       case 'LOAD_LITEMATIC': {
-        if (!isInitialized) {
-          await engine.init();
-          isInitialized = true;
-        }
+        await ensureInit();
         const summary = engine.loadLitematic(new Uint8Array(msg.buffer));
         self.postMessage({ id: msg.id, ok: true, data: summary });
         break;
@@ -222,6 +236,22 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
     }
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
+    if (isEngineCrash(err)) {
+      // Start a fresh instance so the app keeps working; the session is lost.
+      initPromise = null;
+      try {
+        await ensureInit();
+      } catch {
+        // Reported on the next call.
+      }
+      self.postMessage({
+        id: msg.id,
+        ok: false,
+        engineReset: true,
+        error: `The engine hit an internal error and was restarted (${errorMsg}). The open document was closed; please reopen the file.`,
+      });
+      return;
+    }
     self.postMessage({ id: msg.id, ok: false, error: errorMsg });
   }
 };

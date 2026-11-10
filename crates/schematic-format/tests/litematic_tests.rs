@@ -426,3 +426,152 @@ fn test_modern_minecraft_version() {
     let reparsed = LitematicDocument::parse(&exported).unwrap();
     assert_eq!(reparsed.data_version, 3953);
 }
+
+/// Issue #37: with a negative `Size`, the block container and TileEntities
+/// are indexed from the region's minimum corner (never mirrored), and entity
+/// `Pos` is relative to `Position` (the primary corner).
+#[test]
+fn negative_size_regions_are_not_mirrored() {
+    use schematic_core::BlockPosition;
+
+    let compound = |pairs: Vec<(&str, NbtTag)>| {
+        NbtTag::Compound(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+    };
+    let xyz = |x: i32, y: i32, z: i32| {
+        compound(vec![
+            ("x", NbtTag::Int(x)),
+            ("y", NbtTag::Int(y)),
+            ("z", NbtTag::Int(z)),
+        ])
+    };
+    let block = |name: &str| compound(vec![("Name", NbtTag::String(name.to_string()))]);
+
+    // Position (10, 20, 30), Size (-4, -5, -6): occupies x 7..=10, y 16..=20, z 25..=30.
+    // Container index 0 is the minimum corner (7, 16, 25) and holds gold.
+    // The last index is the primary corner (10, 20, 30) and holds a chest.
+    let total = 4 * 5 * 6;
+    let mut indices = vec![0usize; total];
+    indices[0] = 1;
+    indices[total - 1] = 2;
+    let packed = schematic_format::bit_packing::pack_block_states(&indices, 2);
+
+    let chest = compound(vec![
+        ("id", NbtTag::String("minecraft:chest".into())),
+        ("x", NbtTag::Int(3)),
+        ("y", NbtTag::Int(4)),
+        ("z", NbtTag::Int(5)),
+        ("Lock", NbtTag::String("key".into())),
+    ]);
+    // World (7.5, 16.0, 29.5) relative to Position (10, 20, 30).
+    let pig = compound(vec![
+        ("id", NbtTag::String("minecraft:pig".into())),
+        (
+            "Pos",
+            NbtTag::List(
+                6,
+                vec![
+                    NbtTag::Double(-2.5),
+                    NbtTag::Double(-4.0),
+                    NbtTag::Double(-0.5),
+                ],
+            ),
+        ),
+    ]);
+
+    let region = compound(vec![
+        ("Position", xyz(10, 20, 30)),
+        ("Size", xyz(-4, -5, -6)),
+        (
+            "BlockStatePalette",
+            NbtTag::List(
+                10,
+                vec![
+                    block("minecraft:air"),
+                    block("minecraft:gold_block"),
+                    block("minecraft:chest"),
+                ],
+            ),
+        ),
+        ("BlockStates", NbtTag::LongArray(packed)),
+        ("TileEntities", NbtTag::List(10, vec![chest])),
+        ("Entities", NbtTag::List(10, vec![pig])),
+    ]);
+    let root = compound(vec![
+        ("MinecraftDataVersion", NbtTag::Int(3465)),
+        ("Version", NbtTag::Int(6)),
+        ("Metadata", compound(vec![])),
+        ("Regions", compound(vec![("Neg", region)])),
+    ]);
+    let bytes = schematic_format::encode_gzip("", &root).unwrap();
+    let parsed = LitematicDocument::parse(&bytes).unwrap();
+    let id = RegionId::new("Neg");
+    let reg = parsed.document.region(&id).unwrap();
+    assert_eq!(reg.origin(), Position::new(7, 16, 25));
+
+    let name_at = |p: BlockPosition| {
+        reg.block_index_at(p)
+            .unwrap()
+            .and_then(|i| reg.palette().get(i))
+            .map(|s| s.id().to_string())
+    };
+    assert_eq!(
+        name_at(BlockPosition::new(0, 0, 0)).as_deref(),
+        Some("minecraft:gold_block"),
+        "container index 0 is the minimum corner"
+    );
+    assert_eq!(
+        name_at(BlockPosition::new(3, 4, 5)).as_deref(),
+        Some("minecraft:chest"),
+        "last container index is the primary corner"
+    );
+
+    let be = parsed
+        .document
+        .block_entity_at(&id, BlockPosition::new(3, 4, 5))
+        .expect("tile entity sits on its chest");
+    assert_eq!(be.data.get("Lock").unwrap().as_string(), Some("key"));
+
+    let pig = parsed.document.entities().next().unwrap();
+    assert_eq!(
+        pig.position,
+        [0.5, 0.0, 4.5],
+        "region-local from the minimum corner"
+    );
+
+    // Re-export keeps the original encoding byte-for-value.
+    let reparsed = LitematicDocument::parse(&parsed.export(&parsed.document).unwrap()).unwrap();
+    let raw = reparsed.raw_regions.get(&id).unwrap();
+    assert_eq!(raw.original_size, [-4, -5, -6]);
+    assert!(parsed.document.is_same_content(&reparsed.document));
+    let exported_root =
+        schematic_format::decode_gzip_or_raw(&parsed.export(&parsed.document).unwrap())
+            .unwrap()
+            .1;
+    let out_region = exported_root.as_compound().unwrap()["Regions"]
+        .as_compound()
+        .unwrap()["Neg"]
+        .as_compound()
+        .unwrap()
+        .clone();
+    let out_pos = out_region["Entities"].as_list().unwrap()[0]
+        .as_compound()
+        .unwrap()["Pos"]
+        .as_list()
+        .unwrap()
+        .iter()
+        .map(|t| t.as_f64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(out_pos, vec![-2.5, -4.0, -0.5]);
+    let out_te = out_region["TileEntities"].as_list().unwrap()[0]
+        .as_compound()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            out_te["x"].as_i32(),
+            out_te["y"].as_i32(),
+            out_te["z"].as_i32()
+        ),
+        (Some(3), Some(4), Some(5))
+    );
+}

@@ -10,7 +10,7 @@ pub use session::{
     DocumentSummary, ExportLoss, ExportReport, FillRequest, Fixability, HistorySummary,
     MaterialItem, MirrorRequest, MoveRequest, PasteRequest, PreviewDiff, PreviewSummary,
     RegionInspectionSummary, RegionMeshData, RegionSummary, ReplaceRequest, RotateRequest,
-    SelectionBounds, Session, SessionStatus, StructureStatistics,
+    SelectionBounds, Session, SessionStatus, StructureStatistics, SURFACE_ANALYSIS_MAX_BLOCKS,
 };
 
 #[cfg(target_arch = "wasm32")]

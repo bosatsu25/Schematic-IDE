@@ -1,10 +1,10 @@
 use crate::{
-    bit_packing::{bits_per_block, pack_block_states, unpack_block_states},
+    bit_packing::{bits_per_block, packed_len, read_packed, BitPacker},
     nbt::{decode_gzip_or_raw, encode_gzip, NbtError, NbtTag},
 };
 use schematic_core::{
     BlockEntityRef, BlockPosition, BlockProperty, BlockState, Document, DocumentMetadata,
-    EntityRef, NbtCompound, PaletteIndex, Position, Region, RegionId, Size,
+    EntityRef, NbtCompound, Position, Region, RegionId, Size,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -149,9 +149,12 @@ impl LitematicDocument {
                 let sy = size_compound.get("y").and_then(|t| t.as_i32()).unwrap_or(0);
                 let sz = size_compound.get("z").and_then(|t| t.as_i32()).unwrap_or(0);
 
-                let min_x = if sx >= 0 { px } else { px + sx + 1 };
-                let min_y = if sy >= 0 { py } else { py + sy + 1 };
-                let min_z = if sz >= 0 { pz } else { pz + sz + 1 };
+                let [min_x, min_y, min_z] = region_min_corner([px, py, pz], [sx, sy, sz])
+                    .ok_or_else(|| {
+                        FormatError::InvalidStructure(format!(
+                            "Region '{region_name}' position/size is out of the coordinate range"
+                        ))
+                    })?;
                 let len_x = sx.unsigned_abs();
                 let len_y = sy.unsigned_abs();
                 let len_z = sz.unsigned_abs();
@@ -172,6 +175,9 @@ impl LitematicDocument {
                     })?;
 
                 let mut palette_states = Vec::with_capacity(palette_list.len());
+                // File palette index -> region palette index (they differ when
+                // a corrupt palette repeats an entry).
+                let mut region_indices = Vec::with_capacity(palette_list.len());
                 for (entry_idx, entry_tag) in palette_list.iter().enumerate() {
                     let entry = entry_tag.as_compound().ok_or_else(|| {
                         FormatError::InvalidStructure(format!(
@@ -204,69 +210,77 @@ impl LitematicDocument {
                         ))
                     })?;
 
-                    region
-                        .palette_mut()
-                        .intern(block_state.clone())
-                        .map_err(|e| {
-                            FormatError::InvalidStructure(format!("Palette error: {e}"))
-                        })?;
+                    let region_index =
+                        region
+                            .palette_mut()
+                            .intern(block_state.clone())
+                            .map_err(|e| {
+                                FormatError::InvalidStructure(format!("Palette error: {e}"))
+                            })?;
+                    region_indices.push(region_index);
                     palette_states.push(block_state);
                 }
 
-                // BlockStates LongArray
-                if let Some(longs) = reg_compound
-                    .get("BlockStates")
-                    .and_then(|t| t.as_long_array())
-                {
-                    let total_blocks = (len_x as usize) * (len_y as usize) * (len_z as usize);
+                // BlockStates LongArray. The container is always indexed from
+                // the region's minimum corner, whatever the sign of Size (see
+                // `EntityFrame`), in y, z, x order.
+                let volume = region_volume(len_x, len_y, len_z).ok_or_else(|| {
+                    FormatError::InvalidStructure(format!(
+                        "Region '{region_name}' is too large ({len_x}x{len_y}x{len_z})"
+                    ))
+                })?;
+                if volume > 0 {
+                    let longs = reg_compound
+                        .get("BlockStates")
+                        .and_then(|t| t.as_long_array())
+                        .ok_or_else(|| {
+                            FormatError::MissingField(format!(
+                                "BlockStates in region '{region_name}'"
+                            ))
+                        })?;
                     let bits = bits_per_block(palette_states.len().max(1));
-                    let indices = unpack_block_states(longs, total_blocks, bits);
-
-                    for dy in 0..len_y {
-                        for dz in 0..len_z {
-                            for dx in 0..len_x {
-                                let k = ((dy as usize * len_z as usize) + dz as usize)
-                                    * len_x as usize
-                                    + dx as usize;
-                                if k >= indices.len() {
-                                    continue;
-                                }
-                                let palette_idx = indices[k];
-                                if palette_idx >= palette_states.len() {
-                                    continue;
-                                }
-                                let state = &palette_states[palette_idx];
-                                // Skip air in sparse chunk representation
-                                if state.id() == "minecraft:air"
-                                    || state.id() == "air"
-                                    || state.id() == "minecraft:cave_air"
-                                    || state.id() == "minecraft:void_air"
-                                {
-                                    continue;
-                                }
-
-                                let lx = if sx >= 0 { dx } else { len_x - 1 - dx } as i64;
-                                let ly = if sy >= 0 { dy } else { len_y - 1 - dy } as i64;
-                                let lz = if sz >= 0 { dz } else { len_z - 1 - dz } as i64;
-
-                                let local_pos = BlockPosition::new(lx, ly, lz);
-                                region
-                                    .set_block_index(
-                                        local_pos,
-                                        Some(PaletteIndex::new(palette_idx as u32)),
-                                    )
-                                    .map_err(|e| {
-                                        FormatError::InvalidStructure(format!(
-                                            "Set block error: {e}"
-                                        ))
-                                    })?;
-                            }
+                    let needed = packed_len(volume, bits);
+                    if (longs.len() as u64) < needed {
+                        // Never trust the declared size: a short array would
+                        // otherwise silently read as air.
+                        return Err(FormatError::InvalidStructure(format!(
+                            "Region '{region_name}' declares {len_x}x{len_y}x{len_z} blocks but BlockStates holds {} of {needed} longs",
+                            longs.len()
+                        )));
+                    }
+                    let is_air: Vec<bool> = palette_states
+                        .iter()
+                        .map(|state| {
+                            matches!(
+                                state.id(),
+                                "minecraft:air"
+                                    | "air"
+                                    | "minecraft:cave_air"
+                                    | "minecraft:void_air"
+                            )
+                        })
+                        .collect();
+                    let (lx, lz) = (len_x as u64, len_z as u64);
+                    for k in 0..volume {
+                        let palette_idx = read_packed(longs, k, bits);
+                        if palette_idx >= palette_states.len() || is_air[palette_idx] {
+                            continue;
                         }
+                        let local_pos = BlockPosition::new(
+                            (k % lx) as i64,
+                            (k / (lx * lz)) as i64,
+                            ((k / lx) % lz) as i64,
+                        );
+                        region
+                            .set_block_index(local_pos, Some(region_indices[palette_idx]))
+                            .map_err(|e| {
+                                FormatError::InvalidStructure(format!("Set block error: {e}"))
+                            })?;
                     }
                 }
 
-                // Block Entities (container coordinates, mapped like blocks)
-                let flip = AxisFlip::new([sx, sy, sz]);
+                // Block Entities: x/y/z are container coordinates (minimum corner).
+                let frame = EntityFrame::new([sx, sy, sz]);
                 if let Some(be_list) = reg_compound.get("TileEntities").and_then(|t| t.as_list()) {
                     for be_tag in be_list {
                         let Some(be_comp) = be_tag.as_compound() else {
@@ -279,8 +293,12 @@ impl LitematicDocument {
                         let by = take_int(&mut data, "y").unwrap_or(0);
                         let bz = take_int(&mut data, "z").unwrap_or(0);
                         document.add_block_entity(
-                            BlockEntityRef::new(region_id.clone(), id, flip.block([bx, by, bz]))
-                                .with_data(data),
+                            BlockEntityRef::new(
+                                region_id.clone(),
+                                id,
+                                BlockPosition::new(bx as i64, by as i64, bz as i64),
+                            )
+                            .with_data(data),
                         );
                     }
                 }
@@ -296,7 +314,8 @@ impl LitematicDocument {
                             .unwrap_or_else(|| "unknown".to_string());
                         let pos = take_double_list(&mut data, "Pos").unwrap_or([0.0; 3]);
                         document.add_entity(
-                            EntityRef::new(region_id.clone(), id, flip.point(pos)).with_data(data),
+                            EntityRef::new(region_id.clone(), id, frame.to_local(pos))
+                                .with_data(data),
                         );
                     }
                 }
@@ -376,24 +395,24 @@ impl LitematicDocument {
             meta_map.insert("TimeModified".to_string(), NbtTag::Long(modified));
         }
 
-        let mut total_volume = 0i32;
-        let mut total_blocks = 0i32;
+        let mut total_volume = 0i64;
+        let mut total_blocks = 0i64;
         let mut min_bounds: Option<[i32; 3]> = None;
         let mut max_bounds: Option<[i32; 3]> = None;
 
         for region in doc.regions() {
             let s = region.size();
-            total_volume += (s.x as i32) * (s.y as i32) * (s.z as i32);
+            total_volume += (s.x as i64) * (s.y as i64) * (s.z as i64);
             for (_, chunk) in region.chunks() {
-                total_blocks += chunk.occupied_blocks().count() as i32;
+                total_blocks += chunk.occupied_blocks().count() as i64;
             }
             let o = region.origin();
             let ox = o.x;
             let oy = o.y;
             let oz = o.z;
-            let ex = ox + s.x as i32;
-            let ey = oy + s.y as i32;
-            let ez = oz + s.z as i32;
+            let ex = ox.saturating_add(s.x as i32);
+            let ey = oy.saturating_add(s.y as i32);
+            let ez = oz.saturating_add(s.z as i32);
 
             match &mut min_bounds {
                 None => min_bounds = Some([ox, oy, oz]),
@@ -413,14 +432,15 @@ impl LitematicDocument {
             }
         }
 
-        meta_map.insert("TotalVolume".to_string(), NbtTag::Int(total_volume));
-        meta_map.insert("TotalBlocks".to_string(), NbtTag::Int(total_blocks));
+        let clamp = |v: i64| NbtTag::Int(v.min(i32::MAX as i64) as i32);
+        meta_map.insert("TotalVolume".to_string(), clamp(total_volume));
+        meta_map.insert("TotalBlocks".to_string(), clamp(total_blocks));
 
         let enclosing_size = if let (Some(min), Some(max)) = (min_bounds, max_bounds) {
             let mut enc = BTreeMap::new();
-            enc.insert("x".to_string(), NbtTag::Int(max[0] - min[0]));
-            enc.insert("y".to_string(), NbtTag::Int(max[1] - min[1]));
-            enc.insert("z".to_string(), NbtTag::Int(max[2] - min[2]));
+            enc.insert("x".to_string(), NbtTag::Int(max[0].saturating_sub(min[0])));
+            enc.insert("y".to_string(), NbtTag::Int(max[1].saturating_sub(min[1])));
+            enc.insert("z".to_string(), NbtTag::Int(max[2].saturating_sub(min[2])));
             NbtTag::Compound(enc)
         } else {
             let mut enc = BTreeMap::new();
@@ -526,49 +546,47 @@ impl LitematicDocument {
                 NbtTag::List(10, palette_tags),
             );
 
-            // BlockStates LongArray
+            // BlockStates LongArray (y, z, x order from the minimum corner),
+            // packed while iterating: no per-block index list is allocated.
             let len_x = sx.unsigned_abs();
             let len_y = sy.unsigned_abs();
             let len_z = sz.unsigned_abs();
-            let total_blocks = (len_x as usize) * (len_y as usize) * (len_z as usize);
+            let volume = region_volume(len_x, len_y, len_z).ok_or_else(|| {
+                FormatError::InvalidStructure(format!(
+                    "Region '{}' is too large to export",
+                    region.id().as_str()
+                ))
+            })?;
             let bits = bits_per_block(out_palette.len());
-
-            let mut indices = Vec::with_capacity(total_blocks);
-            for dy in 0..len_y {
-                for dz in 0..len_z {
-                    for dx in 0..len_x {
-                        let lx = if sx >= 0 { dx } else { len_x - 1 - dx } as i64;
-                        let ly = if sy >= 0 { dy } else { len_y - 1 - dy } as i64;
-                        let lz = if sz >= 0 { dz } else { len_z - 1 - dz } as i64;
-                        let local_pos = BlockPosition::new(lx, ly, lz);
-
-                        let p_idx = match region.block_index_at(local_pos).ok().flatten() {
-                            Some(idx) => {
-                                if let Some(state) = region.palette().get(idx) {
-                                    out_palette
-                                        .iter()
-                                        .position(|s| s == state)
-                                        .unwrap_or(air_idx.unwrap())
-                                } else {
-                                    air_idx.unwrap()
-                                }
-                            }
-                            None => air_idx.unwrap(),
+            let air = air_idx.unwrap_or(0);
+            // `out_palette` lists the region palette in index order, so a
+            // region palette index is also the output index.
+            let palette_len = region.palette().len();
+            let mut packer = BitPacker::new(volume, bits);
+            for dy in 0..len_y as i64 {
+                for dz in 0..len_z as i64 {
+                    for dx in 0..len_x as i64 {
+                        let p_idx = match region
+                            .block_index_at(BlockPosition::new(dx, dy, dz))
+                            .ok()
+                            .flatten()
+                        {
+                            Some(idx) if (idx.get() as usize) < palette_len => idx.get() as usize,
+                            _ => air,
                         };
-                        indices.push(p_idx);
+                        packer.push(p_idx);
                     }
                 }
             }
-
-            let packed = pack_block_states(&indices, bits);
+            let packed = packer.finish();
             reg_compound.insert("BlockStates".to_string(), NbtTag::LongArray(packed));
 
             // Block Entities & Entities (from the edited document)
-            let flip = AxisFlip::new([sx, sy, sz]);
+            let frame = EntityFrame::new([sx, sy, sz]);
             let mut tile_entities = Vec::new();
             for be in doc.block_entities_in(region.id()) {
                 let mut compound = be.data.clone();
-                let [x, y, z] = flip.unblock(be.position);
+                let [x, y, z] = be.position.coordinates().map(|v| v as i32);
                 compound.insert("id".to_string(), NbtTag::String(be.kind.clone()));
                 compound.insert("x".to_string(), NbtTag::Int(x));
                 compound.insert("y".to_string(), NbtTag::Int(y));
@@ -581,7 +599,10 @@ impl LitematicDocument {
             for entity in doc.entities_in(region.id()) {
                 let mut compound = entity.data.clone();
                 compound.insert("id".to_string(), NbtTag::String(entity.kind.clone()));
-                compound.insert("Pos".to_string(), double_list(flip.point(entity.position)));
+                compound.insert(
+                    "Pos".to_string(),
+                    double_list(frame.to_file(entity.position)),
+                );
                 entities.push(NbtTag::Compound(compound));
             }
             reg_compound.insert("Entities".to_string(), NbtTag::List(10, entities));
@@ -618,53 +639,73 @@ impl LitematicDocument {
     }
 }
 
-/// Maps Litematica container coordinates to region-local coordinates using the
-/// same per-axis flip applied to blocks for negative region sizes.
-struct AxisFlip {
-    len: [i64; 3],
-    negative: [bool; 3],
+/// Litematica coordinate conventions for a region whose `Size` may be negative.
+///
+/// - `Position` is the region's primary corner. When a `Size` component is
+///   negative the region extends towards negative coordinates, so the minimum
+///   corner is `Position + Size + 1` on that axis.
+/// - `BlockStates` and `TileEntities` coordinates are always relative to the
+///   **minimum corner** (container coordinates); they are never mirrored.
+/// - Entity `Pos` is relative to `Position` (the primary corner), so on a
+///   negative axis it lies in `(Size, 0]` and is shifted by `|Size| - 1` to
+///   reach region-local (minimum-corner) coordinates.
+///
+/// This matches independent readers of the format; verifying it against a
+/// file written by Litematica itself is tracked in issue #37.
+/// Largest region volume any adapter accepts. Real builds are far smaller
+/// (a 2000x256x2000 map area is about half of this); the cap keeps hostile
+/// sizes from turning into endless loops or giant allocations.
+pub const MAX_REGION_VOLUME: u64 = 1 << 31;
+
+/// `x * y * z` if it is within [`MAX_REGION_VOLUME`].
+pub(crate) fn region_volume(x: u32, y: u32, z: u32) -> Option<u64> {
+    let volume = (x as u64).checked_mul(y as u64)?.checked_mul(z as u64)?;
+    (volume <= MAX_REGION_VOLUME).then_some(volume)
 }
 
-impl AxisFlip {
+/// Whether a region at `origin` with `size` stays inside `i32` coordinates.
+pub(crate) fn region_fits(origin: [i32; 3], size: [u32; 3]) -> bool {
+    (0..3).all(|i| i32::try_from(origin[i] as i64 + size[i] as i64).is_ok())
+}
+
+/// Minimum corner of a Litematica region, or `None` when the region does
+/// not fit in `i32` block coordinates.
+fn region_min_corner(pos: [i32; 3], size: [i32; 3]) -> Option<[i32; 3]> {
+    let mut min = [0i32; 3];
+    for i in 0..3 {
+        let p = pos[i] as i64;
+        let s = size[i] as i64;
+        let lo = if s >= 0 { p } else { p + s + 1 };
+        let hi = lo + s.abs();
+        min[i] = i32::try_from(lo).ok()?;
+        i32::try_from(hi).ok()?;
+    }
+    Some(min)
+}
+
+struct EntityFrame {
+    shift: [f64; 3],
+}
+
+impl EntityFrame {
     fn new(size: [i32; 3]) -> Self {
         Self {
-            len: size.map(|s| s.unsigned_abs() as i64),
-            negative: size.map(|s| s < 0),
+            shift: size.map(|s| {
+                if s < 0 {
+                    (s.unsigned_abs() as f64) - 1.0
+                } else {
+                    0.0
+                }
+            }),
         }
     }
 
-    fn block(&self, c: [i32; 3]) -> BlockPosition {
-        let m = |i: usize| {
-            let v = c[i] as i64;
-            if self.negative[i] {
-                self.len[i] - 1 - v
-            } else {
-                v
-            }
-        };
-        BlockPosition::new(m(0), m(1), m(2))
+    fn to_local(&self, p: [f64; 3]) -> [f64; 3] {
+        [0, 1, 2].map(|i| p[i] + self.shift[i])
     }
 
-    fn unblock(&self, p: BlockPosition) -> [i32; 3] {
-        let c = p.coordinates();
-        [0, 1, 2].map(|i| {
-            if self.negative[i] {
-                (self.len[i] - 1 - c[i]) as i32
-            } else {
-                c[i] as i32
-            }
-        })
-    }
-
-    /// Continuous mapping; an involution, so it serves both directions.
-    fn point(&self, p: [f64; 3]) -> [f64; 3] {
-        [0, 1, 2].map(|i| {
-            if self.negative[i] {
-                self.len[i] as f64 - p[i]
-            } else {
-                p[i]
-            }
-        })
+    fn to_file(&self, p: [f64; 3]) -> [f64; 3] {
+        [0, 1, 2].map(|i| p[i] - self.shift[i])
     }
 }
 

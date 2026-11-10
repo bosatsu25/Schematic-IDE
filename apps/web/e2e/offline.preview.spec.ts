@@ -20,6 +20,7 @@ test.describe('Offline PWA shell (production build)', () => {
     const base = new URL(page.url()).pathname;
     expect(base).toBe('/schematic-ide/');
     await expect(page.locator('.app-title')).toHaveText('Schematic IDE');
+    await expect(page.getByTestId('app-version')).toHaveText(/^v\d+\.\d+\.\d+/);
     await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
 

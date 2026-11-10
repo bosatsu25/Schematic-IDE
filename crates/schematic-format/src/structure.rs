@@ -1,6 +1,6 @@
 use crate::{
     convert::merge_regions,
-    litematic::{double_list, take_double_list, take_string, FormatError},
+    litematic::{double_list, region_volume, take_double_list, take_string, FormatError},
     nbt::{decode_gzip_or_raw, encode_gzip, NbtTag},
 };
 use schematic_core::{
@@ -8,6 +8,11 @@ use schematic_core::{
     EntityRef, PaletteIndex, Position, Region, RegionId, Size,
 };
 use std::collections::BTreeMap;
+
+/// Largest volume exported as Structure NBT. The format stores a compound
+/// per cell (vanilla structure blocks top out at 48³), so larger volumes
+/// would need gigabytes of memory.
+pub const STRUCTURE_MAX_EXPORT_VOLUME: u64 = 1 << 24;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructureDocument {
@@ -60,6 +65,11 @@ impl StructureDocument {
         let region_id = RegionId::new("Main");
         let origin = Position::new(0, 0, 0);
         let size = Size::new(width, height, length);
+        if region_volume(width, height, length).is_none() {
+            return Err(FormatError::InvalidStructure(format!(
+                "Structure size {width}x{height}x{length} is out of range"
+            )));
+        }
         let mut region = Region::new(region_id.clone(), origin, size);
 
         // Parse palette: either "palette" (List of Compound) or "palettes" (List of List of Compound)
@@ -220,6 +230,12 @@ impl StructureDocument {
         let width = region.size().x;
         let height = region.size().y;
         let length = region.size().z;
+        // Structure NBT stores one compound per cell, air included.
+        if !region_volume(width, height, length).is_some_and(|v| v <= STRUCTURE_MAX_EXPORT_VOLUME) {
+            return Err(FormatError::InvalidStructure(format!(
+                "A {width}x{height}x{length} volume is too large for Structure NBT (limit: {STRUCTURE_MAX_EXPORT_VOLUME} blocks)"
+            )));
+        }
 
         let mut root = BTreeMap::new();
         root.insert("DataVersion".to_string(), NbtTag::Int(self.data_version));

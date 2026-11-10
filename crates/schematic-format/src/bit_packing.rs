@@ -44,6 +44,79 @@ pub fn unpack_block_states(longs: &[i64], total_blocks: usize, bits: u32) -> Vec
     indices
 }
 
+/// Reads entry `k` of a tightly packed array. Entries past the end read as 0.
+#[inline]
+pub fn read_packed(longs: &[i64], k: u64, bits: u32) -> usize {
+    let start_bit = k * bits as u64;
+    let start_long = (start_bit / 64) as usize;
+    let bit_offset = (start_bit % 64) as u32;
+    let Some(&first) = longs.get(start_long) else {
+        return 0;
+    };
+    let mask = if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
+    let mut value = (first as u64) >> bit_offset;
+    if bit_offset + bits > 64 {
+        if let Some(&next) = longs.get(start_long + 1) {
+            value |= (next as u64) << (64 - bit_offset);
+        }
+    }
+    (value & mask) as usize
+}
+
+/// Number of longs a tightly packed array of `count` entries needs.
+pub fn packed_len(count: u64, bits: u32) -> u64 {
+    (count as u128 * bits as u128).div_ceil(64) as u64
+}
+
+/// Streaming writer for a tightly packed array (no intermediate index list).
+pub struct BitPacker {
+    longs: Vec<i64>,
+    bits: u32,
+    next: u64,
+}
+
+impl BitPacker {
+    pub fn new(count: u64, bits: u32) -> Self {
+        Self {
+            longs: vec![0i64; packed_len(count, bits) as usize],
+            bits,
+            next: 0,
+        }
+    }
+
+    /// Appends one entry; entries beyond the declared count are ignored.
+    #[inline]
+    pub fn push(&mut self, value: usize) {
+        let mask = if self.bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.bits) - 1
+        };
+        let value = value as u64 & mask;
+        let start_bit = self.next * self.bits as u64;
+        self.next += 1;
+        let start_long = (start_bit / 64) as usize;
+        let bit_offset = (start_bit % 64) as u32;
+        let Some(first) = self.longs.get_mut(start_long) else {
+            return;
+        };
+        *first = ((*first as u64) | (value << bit_offset)) as i64;
+        if bit_offset + self.bits > 64 {
+            if let Some(next) = self.longs.get_mut(start_long + 1) {
+                *next = ((*next as u64) | (value >> (64 - bit_offset))) as i64;
+            }
+        }
+    }
+
+    pub fn finish(self) -> Vec<i64> {
+        self.longs
+    }
+}
+
 pub fn pack_block_states(indices: &[usize], bits: u32) -> Vec<i64> {
     if indices.is_empty() || bits == 0 {
         return Vec::new();
@@ -96,6 +169,25 @@ mod tests {
         assert_eq!(bits_per_block(9), 4);
         assert_eq!(bits_per_block(16), 4);
         assert_eq!(bits_per_block(17), 5);
+    }
+
+    #[test]
+    fn streaming_packer_and_reader_match_the_batch_functions() {
+        for bits in 2..=17 {
+            let max_val = (1usize << bits) - 1;
+            let indices: Vec<usize> = (0..333).map(|i| (i * 7919 + 5) % (max_val + 1)).collect();
+            let mut packer = BitPacker::new(indices.len() as u64, bits);
+            for &i in &indices {
+                packer.push(i);
+            }
+            let longs = packer.finish();
+            assert_eq!(longs, pack_block_states(&indices, bits), "bits={bits}");
+            assert_eq!(longs.len() as u64, packed_len(indices.len() as u64, bits));
+            for (k, &i) in indices.iter().enumerate() {
+                assert_eq!(read_packed(&longs, k as u64, bits), i, "bits={bits} k={k}");
+            }
+            assert_eq!(read_packed(&longs, 1 << 40, bits), 0, "past the end");
+        }
     }
 
     #[test]

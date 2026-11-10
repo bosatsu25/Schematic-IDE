@@ -87,6 +87,7 @@ fn test_wasm_session_full_lifecycle() {
         selection: Some(SelectionBounds {
             min: [0, 0, 0],
             max: [10, 5, 5],
+            ..Default::default()
         }),
         from_block: "minecraft:stone".to_string(),
         to_block: "minecraft:diorite".to_string(),
@@ -212,6 +213,7 @@ fn test_structural_editing_session() {
         selection: SelectionBounds {
             min: [2, 2, 2],
             max: [3, 2, 3],
+            ..Default::default()
         },
         block: "minecraft:oak_planks".to_string(),
     };
@@ -225,6 +227,7 @@ fn test_structural_editing_session() {
         selection: SelectionBounds {
             min: [2, 2, 2],
             max: [3, 2, 3],
+            ..Default::default()
         },
     };
     let count = session.copy_selection(copy_req).expect("copy");
@@ -245,6 +248,7 @@ fn test_structural_editing_session() {
         selection: SelectionBounds {
             min: [6, 2, 6],
             max: [7, 2, 7],
+            ..Default::default()
         },
         delta: [0, 1, 0],
     };
@@ -258,6 +262,7 @@ fn test_structural_editing_session() {
         selection: SelectionBounds {
             min: [6, 3, 6],
             max: [7, 3, 7],
+            ..Default::default()
         },
         angle_deg: 90,
     };
@@ -268,6 +273,7 @@ fn test_structural_editing_session() {
         selection: SelectionBounds {
             min: [6, 3, 7],
             max: [7, 3, 7],
+            ..Default::default()
         },
         block: "minecraft:air".to_string(),
     };
@@ -284,6 +290,7 @@ fn test_structural_editing_session() {
         selection: SelectionBounds {
             min: [6, 3, 6],
             max: [7, 3, 7],
+            ..Default::default()
         },
         axis: "x".to_string(),
     };
@@ -314,6 +321,7 @@ fn test_diff_with_source_in_session() {
         selection: SelectionBounds {
             min: [5, 5, 5],
             max: [5, 5, 5],
+            ..Default::default()
         },
         block: "minecraft:diamond_block".to_string(),
     };
@@ -326,6 +334,7 @@ fn test_diff_with_source_in_session() {
         selection: SelectionBounds {
             min: [5, 6, 5],
             max: [5, 6, 5],
+            ..Default::default()
         },
         block: "minecraft:gold_block".to_string(),
     };
@@ -418,4 +427,307 @@ fn test_analyze_document_in_session() {
 
     // Verify features breakdown
     assert!(!report.statistics.feature_counts.is_empty());
+}
+
+/// Issue #21 end-to-end through the session boundary: open a `.litematic`
+/// with a filled chest, move the chest, export, re-open, and find the items
+/// at the new position with nothing left behind.
+#[test]
+fn moved_chest_keeps_its_contents_through_export_and_reload() {
+    use schematic_core::{BlockEntityRef, NbtCompound, NbtTag};
+    use schematic_wasm::MoveRequest;
+
+    let region_id = RegionId::new("Main");
+    let mut doc = Document::new(DocumentMetadata {
+        name: Some("ChestMove".into()),
+        ..Default::default()
+    });
+    let mut region = Region::new(
+        region_id.clone(),
+        Position::new(0, 0, 0),
+        Size::new(8, 2, 8),
+    );
+    let chest = region
+        .palette_mut()
+        .intern(BlockState::new("minecraft:chest", []).unwrap())
+        .unwrap();
+    region
+        .set_block_index(BlockPosition::new(1, 0, 1), Some(chest))
+        .unwrap();
+    doc.insert_region(region);
+    let mut item = NbtCompound::new();
+    item.insert("id".into(), NbtTag::String("minecraft:emerald".into()));
+    item.insert("Count".into(), NbtTag::Byte(7));
+    let mut data = NbtCompound::new();
+    data.insert(
+        "Items".into(),
+        NbtTag::List(10, vec![NbtTag::Compound(item)]),
+    );
+    doc.add_block_entity(
+        BlockEntityRef::new(
+            region_id.clone(),
+            "minecraft:chest",
+            BlockPosition::new(1, 0, 1),
+        )
+        .with_data(data.clone()),
+    );
+    let lit = LitematicDocument::from_document(doc, 3465);
+    let bytes = lit.export(&lit.document).unwrap();
+
+    let mut session = Session::new();
+    session.load_schematic(&bytes).unwrap();
+    let preview = session
+        .preview_move(MoveRequest {
+            region_id: "Main".into(),
+            selection: SelectionBounds {
+                min: [1, 0, 1],
+                max: [1, 0, 1],
+                ..Default::default()
+            },
+            delta: [4, 1, 2],
+        })
+        .unwrap();
+    assert!(preview.can_commit);
+    assert_eq!(preview.changed_block_entities, 2, "remove old + insert new");
+    session.commit_preview().unwrap();
+
+    let reloaded = LitematicDocument::parse(&session.export_litematic().unwrap()).unwrap();
+    let bes: Vec<_> = reloaded.document.block_entities().collect();
+    assert_eq!(bes.len(), 1, "no orphan left at the old position");
+    assert_eq!(bes[0].position, BlockPosition::new(5, 1, 3));
+    assert_eq!(bes[0].data, data);
+
+    // Inspection reads the moved block entity from the edited document.
+    let inspection = session
+        .inspect_block(&schematic_wasm::BlockInspectionRequest {
+            region_id: "Main".into(),
+            x: 5,
+            y: 1,
+            z: 3,
+        })
+        .unwrap()
+        .unwrap();
+    let be_json = inspection
+        .block_entity
+        .expect("block entity at new position");
+    assert_eq!(be_json["id"], "minecraft:chest");
+}
+
+/// Issue #22: exporting must list everything the target format drops.
+#[test]
+fn export_report_lists_conversion_losses_before_export() {
+    let mut doc = Document::new(DocumentMetadata {
+        name: Some("Multi".into()),
+        description: Some("two regions".into()),
+        ..Default::default()
+    });
+    let stone = BlockState::new("minecraft:stone", []).unwrap();
+    for (name, origin) in [("A", Position::new(0, 0, 0)), ("B", Position::new(0, 0, 0))] {
+        let mut r = Region::new(RegionId::new(name), origin, Size::new(2, 1, 1));
+        let i = r.palette_mut().intern(stone.clone()).unwrap();
+        r.set_block_index(BlockPosition::new(0, 0, 0), Some(i))
+            .unwrap();
+        doc.insert_region(r);
+    }
+    // Region B differs at (0,0,0) -> overlap conflict.
+    {
+        let r = doc.region_mut(&RegionId::new("B")).unwrap();
+        let dirt = r
+            .palette_mut()
+            .intern(BlockState::new("minecraft:dirt", []).unwrap())
+            .unwrap();
+        r.set_block_index(BlockPosition::new(0, 0, 0), Some(dirt))
+            .unwrap();
+    }
+    let lit = LitematicDocument::from_document(doc, 3465);
+    let mut session = Session::new();
+    session
+        .load_schematic(&lit.export(&lit.document).unwrap())
+        .unwrap();
+
+    let same = session.export_report("litematic").unwrap();
+    assert!(same.losses.is_empty(), "same-format export is lossless");
+
+    let value = session
+        .command(br#"{"cmd":"export_report","args":{"target":"sponge"}}"#)
+        .unwrap();
+    let codes: Vec<&str> = value["losses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["code"].as_str().unwrap())
+        .collect();
+    assert!(codes.contains(&"REGIONS_MERGED"), "{codes:?}");
+    assert!(codes.contains(&"REGION_OVERLAP"), "{codes:?}");
+    assert!(codes.contains(&"METADATA_DROPPED"), "{codes:?}");
+    assert_eq!(value["blocked"], false);
+
+    assert!(session.command(br#"{"cmd":"nope"}"#).is_err());
+}
+
+fn orphan_and_entity_session() -> Session {
+    use schematic_core::{BlockEntityRef, EntityRef};
+    let region_id = RegionId::new("Main");
+    let mut doc = Document::new(DocumentMetadata {
+        name: Some("Fix".into()),
+        ..Default::default()
+    });
+    let mut region = Region::new(
+        region_id.clone(),
+        Position::new(0, 0, 0),
+        Size::new(4, 2, 4),
+    );
+    let stone = region
+        .palette_mut()
+        .intern(BlockState::new("minecraft:stone", []).unwrap())
+        .unwrap();
+    region
+        .set_block_index(BlockPosition::new(0, 0, 0), Some(stone))
+        .unwrap();
+    doc.insert_region(region);
+    // Block entity on an air cell: orphaned.
+    doc.add_block_entity(BlockEntityRef::new(
+        region_id.clone(),
+        "minecraft:chest",
+        BlockPosition::new(2, 0, 2),
+    ));
+    doc.add_entity(EntityRef::new(region_id, "minecraft:pig", [1.5, 1.0, 1.5]));
+    let lit = LitematicDocument::from_document(doc, 3465);
+    let mut session = Session::new();
+    session
+        .load_schematic(&lit.export(&lit.document).unwrap())
+        .unwrap();
+    session
+}
+
+/// Issue #25: automatically fixable diagnostics get a previewable, undoable repair.
+#[test]
+fn preview_fix_repairs_automatic_diagnostics_and_is_undoable() {
+    let mut session = orphan_and_entity_session();
+    let has_orphan = |s: &Session| {
+        s.validate_document()
+            .unwrap()
+            .iter()
+            .any(|d| d.code == "WARN_ORPHAN_BLOCK_ENTITY")
+    };
+    assert!(has_orphan(&session));
+
+    // Filtering by an unrelated code fixes nothing.
+    let none = session
+        .preview_fix(Some(&["ERR_INVALID_PALETTE_INDEX".to_string()]))
+        .unwrap();
+    assert!(!none.can_commit);
+    session.cancel_preview().unwrap();
+
+    let preview = session.preview_fix(None).unwrap();
+    assert!(preview.can_commit);
+    assert_eq!(preview.changed_block_entities, 1);
+    session.commit_preview().unwrap();
+    assert!(!has_orphan(&session));
+
+    session.undo().unwrap();
+    assert!(has_orphan(&session));
+}
+
+/// Issue #31: entities can be listed, moved and removed with undo.
+#[test]
+fn entities_can_be_listed_moved_and_removed() {
+    let mut session = orphan_and_entity_session();
+    let listing = session.list_entities().unwrap();
+    assert_eq!(listing.block_entities.len(), 1);
+    assert_eq!(listing.block_entities[0].world, Some([2, 0, 2]));
+    assert_eq!(listing.entities.len(), 1);
+    assert_eq!(listing.entities[0].kind, "minecraft:pig");
+
+    let moved = session.preview_move_entity(0, [1.0, 0.0, -0.5]).unwrap();
+    assert!(moved.can_commit);
+    assert_eq!(moved.changed_entities, 1);
+    session.commit_preview().unwrap();
+    assert_eq!(
+        session.list_entities().unwrap().entities[0].position,
+        [2.5, 1.0, 1.0]
+    );
+
+    let value = session
+        .command(br#"{"cmd":"preview_remove_entities","args":{"indices":[0]}}"#)
+        .unwrap();
+    assert_eq!(value["changed_entities"], 1);
+    session.commit_preview().unwrap();
+    assert!(session.list_entities().unwrap().entities.is_empty());
+    session.undo().unwrap();
+    assert_eq!(session.list_entities().unwrap().entities.len(), 1);
+    assert!(session.preview_remove_entities(&[7]).is_err());
+}
+
+/// Writes the multi-region browser E2E fixture: two regions, a filled chest,
+/// a pig, and an orphaned block entity (for the repair flow).
+#[test]
+fn test_export_multi_region_e2e_fixture() {
+    use schematic_core::{BlockEntityRef, EntityRef, NbtCompound, NbtTag};
+    let mut doc = Document::new(DocumentMetadata {
+        name: Some("MultiRegionFixture".into()),
+        author: Some("E2E".into()),
+        ..Default::default()
+    });
+    let north = RegionId::new("North");
+    let south = RegionId::new("South");
+    let mut n = Region::new(north.clone(), Position::new(0, 0, 0), Size::new(4, 2, 4));
+    let stone = n
+        .palette_mut()
+        .intern(BlockState::new("minecraft:stone", []).unwrap())
+        .unwrap();
+    let chest = n
+        .palette_mut()
+        .intern(BlockState::new("minecraft:chest", []).unwrap())
+        .unwrap();
+    for x in 0..4 {
+        for z in 0..4 {
+            n.set_block_index(BlockPosition::new(x, 0, z), Some(stone))
+                .unwrap();
+        }
+    }
+    n.set_block_index(BlockPosition::new(1, 1, 1), Some(chest))
+        .unwrap();
+    let mut s = Region::new(south.clone(), Position::new(8, 0, 0), Size::new(3, 2, 3));
+    let granite = s
+        .palette_mut()
+        .intern(BlockState::new("minecraft:granite", []).unwrap())
+        .unwrap();
+    for x in 0..3 {
+        for z in 0..3 {
+            s.set_block_index(BlockPosition::new(x, 0, z), Some(granite))
+                .unwrap();
+        }
+    }
+    doc.insert_region(n);
+    doc.insert_region(s);
+    let mut item = NbtCompound::new();
+    item.insert("id".into(), NbtTag::String("minecraft:diamond".into()));
+    item.insert("Count".into(), NbtTag::Byte(5));
+    let mut data = NbtCompound::new();
+    data.insert(
+        "Items".into(),
+        NbtTag::List(10, vec![NbtTag::Compound(item)]),
+    );
+    doc.add_block_entity(
+        BlockEntityRef::new(
+            north.clone(),
+            "minecraft:chest",
+            BlockPosition::new(1, 1, 1),
+        )
+        .with_data(data),
+    );
+    doc.add_block_entity(BlockEntityRef::new(
+        south,
+        "minecraft:furnace",
+        BlockPosition::new(1, 1, 1),
+    ));
+    doc.add_entity(EntityRef::new(north, "minecraft:pig", [2.5, 1.0, 2.5]));
+    let lit = LitematicDocument::from_document(doc, 3465);
+    let bytes = lit.export(&lit.document).unwrap();
+    let dest = std::path::Path::new("../../apps/web/e2e/fixtures");
+    if dest.parent().is_some_and(|p| p.exists()) {
+        std::fs::create_dir_all(dest).unwrap();
+        std::fs::write(dest.join("multi_region.litematic"), bytes).unwrap();
+    }
 }

@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import {
   DocumentSummary,
-  RegionMeshData,
   PreviewSummary,
   SessionStatus,
   SelectionBounds,
@@ -11,17 +10,53 @@ import {
   DocumentDiff,
   BlockDiff,
   AnalysisReport,
+  ExportReport,
+  RegionView,
+  EntityInfo,
+  BlockEntityInfo,
+  EntityListing,
 } from '../engine/schematicEngine';
 import { SchematicWorkerClient } from '../worker/workerClient';
 
-export type SidebarTab = 'regions' | 'inspector' | 'problems' | 'diff' | 'analysis';
+/** A mesh update for the renderer, produced by `refreshView`. */
+export interface RenderUpdate {
+  view: RegionView;
+  faces: ArrayBuffer;
+  /** Rebuild every chunk of the region (otherwise only the chunks included). */
+  replaceAll: boolean;
+}
+
+/** A block hit in the 3D viewport. */
+export interface BlockPick {
+  regionId: string;
+  world: [number, number, number];
+  local: [number, number, number];
+}
+
+/** replace: new single-block selection; extend: box from anchor; add: new box. */
+export type PickMode = 'replace' | 'extend' | 'add';
+
+export type SidebarTab = 'regions' | 'inspector' | 'problems' | 'diff' | 'analysis' | 'entities';
 export type ExportFormat = 'litematic' | 'sponge' | 'structure';
 
 export interface EditorState {
   client: SchematicWorkerClient;
   document: DocumentSummary | null;
   selectedRegionId: string | null;
-  meshData: RegionMeshData | null;
+  /** View (origin, size, palette) of the selected region. */
+  meshData: RegionView | null;
+  regionViews: Record<string, RegionView>;
+  /** Pending renderer updates; the viewport drains them on `renderSeq` change. */
+  renderQueue: RenderUpdate[];
+  renderSeq: number;
+  hiddenRegions: Record<string, boolean>;
+  /** Draw regions other than the selected one translucent. */
+  dimInactiveRegions: boolean;
+  selectionAnchor: [number, number, number] | null;
+  entities: EntityInfo[];
+  blockEntities: BlockEntityInfo[];
+  /** Index into `entities` of the entity shown in the entity panel. */
+  selectedEntity: number | null;
   selection: SelectionBounds | null;
   status: SessionStatus;
   previewSummary: PreviewSummary | null;
@@ -38,8 +73,22 @@ export interface EditorState {
   diffMode: boolean;
   selectedDiff: BlockDiff | null;
   analysisReport: AnalysisReport | null;
+  /** Conversion-loss report awaiting the user's decision before export. */
+  pendingExport: { format: ExportFormat; report: ExportReport } | null;
 
   init: () => Promise<void>;
+  /** Re-fetches meshes: every chunk (`full`) or only chunks the engine marked dirty. */
+  refreshView: (full?: boolean) => Promise<void>;
+  drainRenderQueue: () => RenderUpdate[];
+  toggleRegionVisibility: (regionId: string) => void;
+  setDimInactiveRegions: (dim: boolean) => void;
+  pickBlock: (pick: BlockPick, mode: PickMode) => Promise<void>;
+  loadEntities: () => Promise<void>;
+  selectEntity: (index: number | null) => void;
+  previewRemoveEntities: (indices: number[]) => Promise<void>;
+  previewMoveEntity: (index: number, delta: [number, number, number]) => Promise<void>;
+  /** Previews automatic repairs (all `Automatic` diagnostics, or only `codes`). */
+  previewFix: (codes?: string[]) => Promise<void>;
   loadFile: (file: File) => Promise<void>;
   loadBuffer: (buffer: ArrayBuffer, name?: string) => Promise<void>;
   selectRegion: (regionId: string) => Promise<void>;
@@ -72,17 +121,43 @@ export interface EditorState {
   redo: () => Promise<void>;
   setExportFormat: (format: ExportFormat) => void;
   exportFile: (defaultFilename?: string, format?: ExportFormat) => Promise<Uint8Array | null>;
+  /** Checks what the export would drop; exports directly when lossless. */
+  requestExport: (format?: ExportFormat) => Promise<void>;
+  confirmExport: () => Promise<void>;
+  cancelExport: () => void;
   runAnalysis: (regionId?: string) => Promise<void>;
 }
 
 export const useSchematicStore = create<EditorState>((set, get) => {
   const client = new SchematicWorkerClient();
 
+  /** Runs a preview-producing engine call and refreshes the view. */
+  const runPreview = async (call: () => Promise<PreviewSummary>) => {
+    set({ loading: true, error: null });
+    try {
+      const prev = await call();
+      const status = await client.getStatus();
+      await get().refreshView();
+      set({ previewSummary: prev, status, loading: false });
+    } catch (err: unknown) {
+      set({ error: err instanceof Error ? err.message : String(err), loading: false });
+    }
+  };
+
   return {
     client,
     document: null,
     selectedRegionId: null,
     meshData: null,
+    regionViews: {},
+    renderQueue: [],
+    renderSeq: 0,
+    hiddenRegions: {},
+    dimInactiveRegions: true,
+    selectionAnchor: null,
+    entities: [],
+    blockEntities: [],
+    selectedEntity: null,
     selection: null,
     status: {
       loaded: false,
@@ -105,6 +180,7 @@ export const useSchematicStore = create<EditorState>((set, get) => {
     diffMode: false,
     selectedDiff: null,
     analysisReport: null,
+    pendingExport: null,
 
     init: async () => {
       try {
@@ -112,6 +188,111 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       } catch (err: unknown) {
         console.error('Failed to initialize worker:', err);
       }
+    },
+
+    refreshView: async (full = false) => {
+      const doc = get().document;
+      if (!doc) return;
+      const views = { ...get().regionViews };
+      const updates: RenderUpdate[] = [];
+      const dirty = await client.command<Record<string, [number, number, number][]>>(
+        'take_dirty_chunks',
+      );
+      const targets: [string, [number, number, number][] | undefined][] = full
+        ? doc.regions.map((r) => [r.name, undefined])
+        : Object.entries(dirty);
+      for (const [region, chunks] of targets) {
+        const view = await client.command<RegionView>('region_view', { region });
+        const faces = await client.regionFaces(region, chunks);
+        views[region] = view;
+        updates.push({ view, faces, replaceAll: chunks === undefined });
+      }
+      const selected = get().selectedRegionId;
+      set({
+        regionViews: views,
+        meshData: selected ? views[selected] ?? null : null,
+        renderQueue: [...get().renderQueue, ...updates],
+        renderSeq: get().renderSeq + 1,
+      });
+    },
+
+    loadEntities: async () => {
+      try {
+        const listing = await client.command<EntityListing>('list_entities');
+        const selected = get().selectedEntity;
+        set({
+          entities: listing.entities,
+          blockEntities: listing.block_entities,
+          selectedEntity: selected !== null && selected < listing.entities.length ? selected : null,
+        });
+      } catch (err: unknown) {
+        console.error('Failed to list entities:', err);
+      }
+    },
+
+    selectEntity: (index: number | null) => {
+      set({ selectedEntity: index });
+    },
+
+    previewRemoveEntities: async (indices: number[]) => {
+      await runPreview(() => client.command<PreviewSummary>('preview_remove_entities', { indices }));
+    },
+
+    previewMoveEntity: async (index: number, delta: [number, number, number]) => {
+      await runPreview(() => client.command<PreviewSummary>('preview_move_entity', { index, delta }));
+    },
+
+    previewFix: async (codes?: string[]) => {
+      await runPreview(() =>
+        client.command<PreviewSummary>('preview_fix', codes ? { codes } : {}),
+      );
+    },
+
+    drainRenderQueue: () => {
+      const queue = get().renderQueue;
+      if (queue.length > 0) set({ renderQueue: [] });
+      return queue;
+    },
+
+    toggleRegionVisibility: (regionId: string) => {
+      const hidden = { ...get().hiddenRegions };
+      hidden[regionId] = !hidden[regionId];
+      set({ hiddenRegions: hidden });
+    },
+
+    setDimInactiveRegions: (dim: boolean) => {
+      set({ dimInactiveRegions: dim });
+    },
+
+    pickBlock: async (pick: BlockPick, mode: PickMode) => {
+      if (pick.regionId !== get().selectedRegionId) {
+        await get().selectRegion(pick.regionId);
+        mode = 'replace';
+      }
+      const { selection, selectionAnchor } = get();
+      const w = pick.world;
+      if (mode === 'extend' && selectionAnchor && selection) {
+        const a = selectionAnchor;
+        set({
+          selection: {
+            ...selection,
+            min: [Math.min(a[0], w[0]), Math.min(a[1], w[1]), Math.min(a[2], w[2])],
+            max: [Math.max(a[0], w[0]), Math.max(a[1], w[1]), Math.max(a[2], w[2])],
+          },
+        });
+      } else if (mode === 'add' && selection) {
+        set({
+          selection: {
+            min: [...w],
+            max: [...w],
+            extra_boxes: [...(selection.extra_boxes ?? []), [selection.min, selection.max]],
+          },
+          selectionAnchor: w,
+        });
+      } else {
+        set({ selection: { min: [...w], max: [...w] }, selectionAnchor: w });
+      }
+      await get().inspectBlock(pick.local[0], pick.local[1], pick.local[2], pick.regionId);
     },
 
     setExportFormat: (format: ExportFormat) => {
@@ -155,6 +336,7 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       try {
         const docInspection = await client.inspectDocument();
         set({ docInspection });
+        await get().loadEntities();
       } catch (err: unknown) {
         console.error('Failed to inspect document:', err);
       }
@@ -205,7 +387,7 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       set({ loading: true, error: null });
       try {
         const buffer = await file.arrayBuffer();
-        const diff = await client.diffWithLitematic(buffer);
+        const diff = await client.diffWithFile(buffer);
         set({ currentDiff: diff, diffMode: true, loading: false, activeTab: 'diff' });
       } catch (err: unknown) {
         set({
@@ -256,16 +438,24 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           selectedRegionId: initialRegion,
           previewSummary: null,
           selection: null,
+          selectionAnchor: null,
           inspection: null,
+          regionViews: {},
+          hiddenRegions: {},
+          currentDiff: null,
+          diffMode: false,
+          analysisReport: null,
         });
 
-        if (initialRegion) {
-          await get().selectRegion(initialRegion);
-        }
+        await get().refreshView(true);
 
         await get().inspectDocument();
         await get().validateDocument();
-        await get().runAnalysis();
+        // Analysis is expensive on large structures (see docs/benchmarks.md):
+        // it runs when the Analysis tab is opened, not on every load.
+        if (get().activeTab === 'analysis') {
+          await get().runAnalysis();
+        }
 
         const status = await client.getStatus();
         set({ status, loading: false });
@@ -278,18 +468,13 @@ export const useSchematicStore = create<EditorState>((set, get) => {
     },
 
     selectRegion: async (regionId: string) => {
-      set({ selectedRegionId: regionId, loading: true, error: null });
-      try {
-        const meshData = await client.getRegionMesh(regionId);
-        set({ meshData, loading: false });
-        if (get().analysisReport) {
-          await get().runAnalysis(regionId);
-        }
-      } catch (err: unknown) {
-        set({
-          error: err instanceof Error ? err.message : String(err),
-          loading: false,
-        });
+      set({
+        selectedRegionId: regionId,
+        meshData: get().regionViews[regionId] ?? null,
+        error: null,
+      });
+      if (get().analysisReport) {
+        await get().runAnalysis(regionId);
       }
     },
 
@@ -324,11 +509,10 @@ export const useSchematicStore = create<EditorState>((set, get) => {
         });
 
         const status = await client.getStatus();
-        const meshData = await client.getRegionMesh(selectedRegionId);
+        await get().refreshView();
         set({
           previewSummary: prev,
           status,
-          meshData,
           loading: false,
         });
       } catch (err: unknown) {
@@ -359,11 +543,10 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           block,
         });
         const status = await client.getStatus();
-        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        await get().refreshView();
         set({
           previewSummary: prev,
           status,
-          meshData: newMeshData,
           loading: false,
         });
       } catch (err: unknown) {
@@ -414,11 +597,10 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           target,
         });
         const status = await client.getStatus();
-        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        await get().refreshView();
         set({
           previewSummary: prev,
           status,
-          meshData: newMeshData,
           loading: false,
         });
       } catch (err: unknown) {
@@ -449,11 +631,10 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           delta,
         });
         const status = await client.getStatus();
-        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        await get().refreshView();
         set({
           previewSummary: prev,
           status,
-          meshData: newMeshData,
           loading: false,
         });
       } catch (err: unknown) {
@@ -484,11 +665,10 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           angle_deg: angleDeg,
         });
         const status = await client.getStatus();
-        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        await get().refreshView();
         set({
           previewSummary: prev,
           status,
-          meshData: newMeshData,
           loading: false,
         });
       } catch (err: unknown) {
@@ -519,11 +699,10 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           axis,
         });
         const status = await client.getStatus();
-        const newMeshData = await client.getRegionMesh(selectedRegionId);
+        await get().refreshView();
         set({
           previewSummary: prev,
           status,
-          meshData: newMeshData,
           loading: false,
         });
       } catch (err: unknown) {
@@ -552,11 +731,10 @@ export const useSchematicStore = create<EditorState>((set, get) => {
         });
 
         const status = await client.getStatus();
-        const meshData = await client.getRegionMesh(selectedRegionId);
+        await get().refreshView();
         set({
           previewSummary: prev,
           status,
-          meshData,
           loading: false,
         });
       } catch (err: unknown) {
@@ -572,16 +750,13 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       set({ loading: true, error: null });
       try {
         const hist = await client.commitPreview();
-        const meshData = selectedRegionId
-          ? await client.getRegionMesh(selectedRegionId)
-          : null;
+        await get().refreshView();
         set({
           status: {
             ...get().status,
             ...hist,
           },
           previewSummary: null,
-          meshData,
           loading: false,
         });
         await get().inspectDocument();
@@ -602,16 +777,13 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       set({ loading: true, error: null });
       try {
         const hist = await client.cancelPreview();
-        const meshData = selectedRegionId
-          ? await client.getRegionMesh(selectedRegionId)
-          : null;
+        await get().refreshView();
         set({
           status: {
             ...get().status,
             ...hist,
           },
           previewSummary: null,
-          meshData,
           loading: false,
         });
       } catch (err: unknown) {
@@ -627,15 +799,12 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       set({ loading: true, error: null });
       try {
         const hist = await client.undo();
-        const meshData = selectedRegionId
-          ? await client.getRegionMesh(selectedRegionId)
-          : null;
+        await get().refreshView();
         set({
           status: {
             ...get().status,
             ...hist,
           },
-          meshData,
           loading: false,
         });
         await get().inspectDocument();
@@ -656,15 +825,12 @@ export const useSchematicStore = create<EditorState>((set, get) => {
       set({ loading: true, error: null });
       try {
         const hist = await client.redo();
-        const meshData = selectedRegionId
-          ? await client.getRegionMesh(selectedRegionId)
-          : null;
+        await get().refreshView();
         set({
           status: {
             ...get().status,
             ...hist,
           },
-          meshData,
           loading: false,
         });
         await get().inspectDocument();
@@ -678,6 +844,34 @@ export const useSchematicStore = create<EditorState>((set, get) => {
           loading: false,
         });
       }
+    },
+
+    requestExport: async (format?: ExportFormat) => {
+      const activeFormat = format || get().exportFormat || 'litematic';
+      set({ error: null });
+      try {
+        const report = await client.command<ExportReport>('export_report', {
+          target: activeFormat,
+        });
+        if (report.losses.length === 0) {
+          await get().exportFile(undefined, activeFormat);
+        } else {
+          set({ pendingExport: { format: activeFormat, report } });
+        }
+      } catch (err: unknown) {
+        set({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+
+    confirmExport: async () => {
+      const pending = get().pendingExport;
+      if (!pending || pending.report.blocked) return;
+      set({ pendingExport: null });
+      await get().exportFile(undefined, pending.format);
+    },
+
+    cancelExport: () => {
+      set({ pendingExport: null });
     },
 
     exportFile: async (defaultFilename?: string, format?: ExportFormat) => {

@@ -147,8 +147,9 @@ fn test_document_diff_with_entities() {
 
     // Add block entity to doc_after
     doc_after.add_block_entity(BlockEntityRef::new(
+        RegionId::new("R1"),
         "minecraft:chest",
-        Position::new(0, 0, 0),
+        schematic_core::BlockPosition::new(0, 0, 0),
     ));
 
     let diff = diff_documents(&doc_before, &doc_after, false);

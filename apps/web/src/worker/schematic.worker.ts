@@ -38,8 +38,10 @@ export type WorkerMessage =
   | { id: string; type: 'INSPECT_DOCUMENT' }
   | { id: string; type: 'VALIDATE_DOCUMENT' }
   | { id: string; type: 'DIFF_WITH_SOURCE' }
-  | { id: string; type: 'DIFF_WITH_LITEMATIC'; buffer: ArrayBuffer }
-  | { id: string; type: 'ANALYZE_DOCUMENT'; regionId?: string };
+  | { id: string; type: 'DIFF_WITH_FILE'; buffer: ArrayBuffer }
+  | { id: string; type: 'ANALYZE_DOCUMENT'; regionId?: string }
+  | { id: string; type: 'COMMAND'; cmd: string; args?: unknown }
+  | { id: string; type: 'REGION_FACES'; region: string; chunks?: [number, number, number][] };
 
 export interface WorkerResponse {
   id: string;
@@ -186,13 +188,27 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         self.postMessage({ id: msg.id, ok: true, data: res });
         break;
       }
-      case 'DIFF_WITH_LITEMATIC': {
-        const res = engine.diffWithLitematic(new Uint8Array(msg.buffer));
+      case 'DIFF_WITH_FILE': {
+        const res = engine.diffWithFile(new Uint8Array(msg.buffer));
         self.postMessage({ id: msg.id, ok: true, data: res });
         break;
       }
       case 'ANALYZE_DOCUMENT': {
         const res = engine.analyze(msg.regionId);
+        self.postMessage({ id: msg.id, ok: true, data: res });
+        break;
+      }
+      case 'REGION_FACES': {
+        const bytes = engine.regionFaces(msg.region, msg.chunks);
+        // Transfer the buffer: no structured-clone copy of large meshes.
+        (self as unknown as Worker).postMessage(
+          { id: msg.id, ok: true, data: bytes.buffer },
+          [bytes.buffer],
+        );
+        break;
+      }
+      case 'COMMAND': {
+        const res = engine.command(msg.cmd, msg.args ?? {});
         self.postMessage({ id: msg.id, ok: true, data: res });
         break;
       }

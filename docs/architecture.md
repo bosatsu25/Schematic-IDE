@@ -37,6 +37,26 @@ Unknown NBT fields are preserved across parse/serialize cycles. Format adapters 
 
 Heavy parsing, validation, conversion, and mesh generation are routed through web workers and the wasm boundary so the main thread remains responsive.
 
+### Block entities and entities
+
+Block entity and entity NBT lives in the core `Document`: `BlockEntityRef` and
+`EntityRef` carry the owning region, a region-local position and the full
+payload as `NbtTag`. Format adapters translate their own layouts to and from
+this model. Edits produce `PatchSet`s that include block entity and entity
+changes, so the data follows moves, rotations and mirrors, and undo/redo
+restore it exactly. Single-volume formats (`.schem`, `.nbt`) flatten
+multi-region documents (`merge_regions`), and `conversion_report` lists
+anything a target format cannot hold before an export is written.
+
+### Render path
+
+The engine emits face-culled meshes per 16³ chunk as a packed binary stream
+(one `u32` per face), which the worker transfers to the main thread without
+copying. Edits mark only the touched chunks and their neighbours dirty, and
+the renderer rebuilds just those chunk geometries. New engine features are
+exposed through one JSON command channel (`Session::command`) rather than a
+new C-ABI export each.
+
 ## Core domain invariants
 
 - `Position` is a signed 32-bit document/world coordinate. `BlockPosition` is a
@@ -70,11 +90,11 @@ crates/
   schematic-edit/
   schematic-validate/
   schematic-wasm/
+  schematic-diff/
+  schematic-analysis/
 packages/
-  renderer/
-  minecraft-data/
-  ui/
-  shared/
+  renderer/        # Three.js voxel renderer (depends on minecraft-data)
+  minecraft-data/  # block color map, DataVersion -> game version labels
 tests/
   fixtures/
   roundtrip/

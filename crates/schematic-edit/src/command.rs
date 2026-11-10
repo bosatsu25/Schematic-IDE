@@ -1,11 +1,11 @@
-use crate::clipboard::Clipboard;
+use crate::clipboard::{selected_entities, Clipboard};
 use crate::transform::{MirrorAxis, RotationAngle};
-use crate::{BlockChange, PatchSet};
+use crate::{BlockChange, BlockEntityChange, EntityChange, PatchSet};
 use schematic_core::{
-    BlockPosition, BlockState, Document, PaletteError, PaletteIndex, Position, Region, RegionId,
-    Selection,
+    BlockEntityRef, BlockPosition, BlockState, Document, EntityRef, NbtTag, PaletteError,
+    PaletteIndex, Position, Region, RegionId, Selection,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -50,10 +50,11 @@ impl EditCommand for FillCommand {
         let changes = changes
             .into_iter()
             .map(|(position, before)| BlockChange::new(position, before, Some(new_index)));
-        Ok(PatchSet::from_changes(
-            self.region_id.clone(),
-            changes,
-            addition,
+        Ok(finalize_patch(
+            document,
+            &self.region_id,
+            PatchSet::from_changes(self.region_id.clone(), changes, addition),
+            EntityPlan::default(),
         ))
     }
 }
@@ -103,10 +104,11 @@ impl EditCommand for ReplaceCommand {
         let changes = changes
             .into_iter()
             .map(|(position, before)| BlockChange::new(position, Some(before), Some(new_index)));
-        Ok(PatchSet::from_changes(
-            self.region_id.clone(),
-            changes,
-            addition,
+        Ok(finalize_patch(
+            document,
+            &self.region_id,
+            PatchSet::from_changes(self.region_id.clone(), changes, addition),
+            EntityPlan::default(),
         ))
     }
 }
@@ -134,10 +136,13 @@ impl EditCommand for DeleteCommand {
             changes.push(BlockChange::new(position, Some(before), None));
             Ok(())
         })?;
-        Ok(PatchSet::from_changes(
-            self.region_id.clone(),
-            changes,
-            None,
+        let mut plan = EntityPlan::default();
+        plan_source_removal(document, region, &self.selection, &mut plan);
+        Ok(finalize_patch(
+            document,
+            &self.region_id,
+            PatchSet::from_changes(self.region_id.clone(), changes, None),
+            plan,
         ))
     }
 }
@@ -178,7 +183,10 @@ impl EditCommand for PasteCommand {
             }
         }
 
-        apply_block_updates(&self.region_id, region, Vec::new(), blocks_to_set)
+        let patch = apply_block_updates(&self.region_id, region, Vec::new(), blocks_to_set)?;
+        let mut plan = EntityPlan::default();
+        plan_placement(region, self.target_pos, &self.clipboard, true, &mut plan);
+        Ok(finalize_patch(document, &self.region_id, patch, plan))
     }
 }
 
@@ -207,12 +215,18 @@ impl EditCommand for MoveCommand {
             return Ok(PatchSet::empty());
         }
         let region = get_region(document, &self.region_id)?;
-        let clipboard = Clipboard::from_region_selection(region, &self.selection)?;
+        let clipboard =
+            Clipboard::from_document_selection(document, &self.region_id, &self.selection)?;
         if clipboard.is_empty() {
             return Ok(PatchSet::empty());
         }
 
         let min = self.selection.bounds().min();
+        let base = Position::new(
+            min.x + self.delta[0],
+            min.y + self.delta[1],
+            min.z + self.delta[2],
+        );
 
         let mut blocks_to_clear = Vec::new();
         visit_occupied_selected_blocks(region, &self.selection, |pos, _| {
@@ -223,16 +237,20 @@ impl EditCommand for MoveCommand {
         let mut blocks_to_set = Vec::new();
         for block in &clipboard.blocks {
             let world_pos = Position::new(
-                min.x + block.offset[0] + self.delta[0],
-                min.y + block.offset[1] + self.delta[1],
-                min.z + block.offset[2] + self.delta[2],
+                base.x + block.offset[0],
+                base.y + block.offset[1],
+                base.z + block.offset[2],
             );
             if let Some(local_pos) = region.world_to_local(world_pos) {
                 blocks_to_set.push((local_pos, block.state.clone()));
             }
         }
 
-        apply_block_updates(&self.region_id, region, blocks_to_clear, blocks_to_set)
+        let patch = apply_block_updates(&self.region_id, region, blocks_to_clear, blocks_to_set)?;
+        let mut plan = EntityPlan::default();
+        plan_source_removal(document, region, &self.selection, &mut plan);
+        plan_placement(region, base, &clipboard, false, &mut plan);
+        Ok(finalize_patch(document, &self.region_id, patch, plan))
     }
 }
 
@@ -259,7 +277,8 @@ impl EditCommand for RotateCommand {
             return Ok(PatchSet::empty());
         }
         let region = get_region(document, &self.region_id)?;
-        let clipboard = Clipboard::from_region_selection(region, &self.selection)?;
+        let clipboard =
+            Clipboard::from_document_selection(document, &self.region_id, &self.selection)?;
         if clipboard.is_empty() {
             return Ok(PatchSet::empty());
         }
@@ -286,7 +305,11 @@ impl EditCommand for RotateCommand {
             }
         }
 
-        apply_block_updates(&self.region_id, region, blocks_to_clear, blocks_to_set)
+        let patch = apply_block_updates(&self.region_id, region, blocks_to_clear, blocks_to_set)?;
+        let mut plan = EntityPlan::default();
+        plan_source_removal(document, region, &self.selection, &mut plan);
+        plan_placement(region, min, &rotated, false, &mut plan);
+        Ok(finalize_patch(document, &self.region_id, patch, plan))
     }
 }
 
@@ -313,7 +336,8 @@ impl EditCommand for MirrorCommand {
             return Ok(PatchSet::empty());
         }
         let region = get_region(document, &self.region_id)?;
-        let clipboard = Clipboard::from_region_selection(region, &self.selection)?;
+        let clipboard =
+            Clipboard::from_document_selection(document, &self.region_id, &self.selection)?;
         if clipboard.is_empty() {
             return Ok(PatchSet::empty());
         }
@@ -340,7 +364,11 @@ impl EditCommand for MirrorCommand {
             }
         }
 
-        apply_block_updates(&self.region_id, region, blocks_to_clear, blocks_to_set)
+        let patch = apply_block_updates(&self.region_id, region, blocks_to_clear, blocks_to_set)?;
+        let mut plan = EntityPlan::default();
+        plan_source_removal(document, region, &self.selection, &mut plan);
+        plan_placement(region, min, &mirrored, false, &mut plan);
+        Ok(finalize_patch(document, &self.region_id, patch, plan))
     }
 }
 
@@ -404,6 +432,176 @@ fn apply_block_updates(
         changes,
         additions,
     ))
+}
+
+/// Block entity and entity edits planned by a command, merged into its block
+/// patch by [`finalize_patch`].
+#[derive(Debug, Default)]
+pub(crate) struct EntityPlan {
+    block_entities: BTreeMap<BlockPosition, Option<BlockEntityRef>>,
+    remove_entities: Vec<EntityRef>,
+    add_entities: Vec<EntityRef>,
+}
+
+/// Plans removal of every block entity and entity inside `selection`.
+fn plan_source_removal(
+    document: &Document,
+    region: &Region,
+    selection: &Selection,
+    plan: &mut EntityPlan,
+) {
+    for be in document.block_entities_in(region.id()) {
+        if let Some(world) = region.local_to_world(be.position) {
+            if selection.contains(world) {
+                plan.block_entities.insert(be.position, None);
+            }
+        }
+    }
+    for entity in selected_entities(document, region, selection) {
+        plan.remove_entities.push(entity.clone());
+    }
+}
+
+const ENTITY_IDENTITY_KEYS: [&str; 3] = ["UUID", "UUIDMost", "UUIDLeast"];
+
+/// Plans placement of the clipboard's block entities and entities with the
+/// clipboard's minimum corner at world position `base`. Content landing
+/// outside the region is dropped, exactly like blocks.
+fn plan_placement(
+    region: &Region,
+    base: Position,
+    clipboard: &Clipboard,
+    fresh_identity: bool,
+    plan: &mut EntityPlan,
+) {
+    for be in &clipboard.block_entities {
+        let world = Position::new(
+            base.x + be.offset[0],
+            base.y + be.offset[1],
+            base.z + be.offset[2],
+        );
+        if let Some(local) = region.world_to_local(world) {
+            plan.block_entities.insert(
+                local,
+                Some(
+                    BlockEntityRef::new(region.id().clone(), be.kind.clone(), local)
+                        .with_data(be.data.clone()),
+                ),
+            );
+        }
+    }
+    let origin = region.origin();
+    for entity in &clipboard.entities {
+        let world = [
+            base.x as f64 + entity.offset[0],
+            base.y as f64 + entity.offset[1],
+            base.z as f64 + entity.offset[2],
+        ];
+        let cell = Position::new(
+            world[0].floor() as i32,
+            world[1].floor() as i32,
+            world[2].floor() as i32,
+        );
+        if region.world_to_local(cell).is_none() {
+            continue;
+        }
+        let mut data = entity.data.clone();
+        let shift = [
+            cell.x - entity.source_block[0],
+            cell.y - entity.source_block[1],
+            cell.z - entity.source_block[2],
+        ];
+        for (key, delta) in [
+            ("TileX", shift[0]),
+            ("TileY", shift[1]),
+            ("TileZ", shift[2]),
+        ] {
+            if let Some(NbtTag::Int(value)) = data.get_mut(key) {
+                *value += delta;
+            }
+        }
+        if fresh_identity {
+            for key in ENTITY_IDENTITY_KEYS {
+                data.remove(key);
+            }
+        }
+        plan.add_entities.push(
+            EntityRef::new(
+                region.id().clone(),
+                entity.kind.clone(),
+                [
+                    world[0] - origin.x as f64,
+                    world[1] - origin.y as f64,
+                    world[2] - origin.z as f64,
+                ],
+            )
+            .with_data(data),
+        );
+    }
+}
+
+/// Merges planned entity edits into a block patch and removes block entities
+/// whose block is cleared or replaced by a different block type, so no block
+/// entity is ever left orphaned or silently attached to the wrong block.
+pub(crate) fn finalize_patch(
+    document: &Document,
+    region_id: &RegionId,
+    patch: PatchSet,
+    mut plan: EntityPlan,
+) -> PatchSet {
+    let Some(region) = document.region(region_id) else {
+        return patch;
+    };
+    let mut orphaned = Vec::new();
+    for change in patch.patches().flat_map(|p| p.changes()) {
+        let position = change.position();
+        if plan.block_entities.contains_key(&position)
+            || document.block_entity_at(region_id, position).is_none()
+        {
+            continue;
+        }
+        let before_id = change
+            .before()
+            .and_then(|i| region.palette().get(i))
+            .map(BlockState::id);
+        let after_id = change
+            .after()
+            .and_then(|i| patch.planned_state(document, region_id, i))
+            .map(BlockState::id);
+        if after_id.is_none() || after_id != before_id {
+            orphaned.push(position);
+        }
+    }
+    for position in orphaned {
+        plan.block_entities.insert(position, None);
+    }
+
+    let block_entity_changes: Vec<BlockEntityChange> = plan
+        .block_entities
+        .into_iter()
+        .filter_map(|(position, after)| {
+            let before = document.block_entity_at(region_id, position).cloned();
+            (before != after).then(|| BlockEntityChange {
+                region: region_id.clone(),
+                position,
+                before,
+                after,
+            })
+        })
+        .collect();
+    let entity_changes: Vec<EntityChange> = plan
+        .remove_entities
+        .into_iter()
+        .map(|e| EntityChange {
+            before: Some(e),
+            after: None,
+        })
+        .chain(plan.add_entities.into_iter().map(|e| EntityChange {
+            before: None,
+            after: Some(e),
+        }))
+        .collect();
+    patch.with_entity_changes(block_entity_changes, entity_changes)
 }
 
 fn get_region<'a>(document: &'a Document, id: &RegionId) -> Result<&'a Region, EditError> {

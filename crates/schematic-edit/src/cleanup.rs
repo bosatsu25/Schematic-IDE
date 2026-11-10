@@ -1,5 +1,5 @@
 use crate::{
-    command::{planned_palette_index, EditError},
+    command::{finalize_patch, planned_palette_index, EditError, EntityPlan},
     patch::{BlockChange, PatchSet},
 };
 use schematic_analysis::{
@@ -143,10 +143,11 @@ impl DisconnectedIslandCleanupPlanner {
             let block_changes = changes
                 .into_iter()
                 .map(|(pos, before)| BlockChange::new(pos, before, None));
-            Ok(PatchSet::from_changes(
-                region_id.clone(),
-                block_changes,
-                None,
+            Ok(finalize_patch(
+                document,
+                region_id,
+                PatchSet::from_changes(region_id.clone(), block_changes, None),
+                EntityPlan::default(),
             ))
         } else {
             let (new_index, addition) = planned_palette_index(region, &request.replacement_state)
@@ -154,10 +155,11 @@ impl DisconnectedIslandCleanupPlanner {
             let block_changes = changes
                 .into_iter()
                 .map(|(pos, before)| BlockChange::new(pos, before, Some(new_index)));
-            Ok(PatchSet::from_changes(
-                region_id.clone(),
-                block_changes,
-                addition,
+            Ok(finalize_patch(
+                document,
+                region_id,
+                PatchSet::from_changes(region_id.clone(), block_changes, addition),
+                EntityPlan::default(),
             ))
         }
     }

@@ -99,8 +99,9 @@ fn test_detects_block_entity_outside_regions() {
 
     // Block entity at (100, 100, 100) is far outside
     doc.add_block_entity(BlockEntityRef::new(
+        RegionId::new("Main"),
         "minecraft:chest",
-        Position::new(100, 100, 100),
+        schematic_core::BlockPosition::new(100, 100, 100),
     ));
 
     let diagnostics = validate_document(&doc);

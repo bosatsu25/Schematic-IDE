@@ -237,15 +237,33 @@ fn document_holds_regions_metadata_and_entity_references() {
         Size::new(1, 1, 1),
     );
     document.insert_region(region);
-    document.add_entity(EntityRef::new("minecraft:armor_stand", [0.5, 1.0, 0.5]));
+    let room = RegionId::new("room");
+    document.add_entity(EntityRef::new(
+        room.clone(),
+        "minecraft:armor_stand",
+        [0.5, 1.0, 0.5],
+    ));
     document.add_block_entity(schematic_core::BlockEntityRef::new(
+        room.clone(),
         "minecraft:chest",
-        Position::new(0, 0, 0),
+        schematic_core::BlockPosition::new(0, 0, 0),
     ));
 
     assert_eq!(document.regions().count(), 1);
     assert_eq!(document.entities().count(), 1);
     assert_eq!(document.block_entities().count(), 1);
+
+    // Same position replaces; removal works and round-trips through lookup.
+    let replaced = document.add_block_entity(schematic_core::BlockEntityRef::new(
+        room.clone(),
+        "minecraft:barrel",
+        schematic_core::BlockPosition::new(0, 0, 0),
+    ));
+    assert_eq!(replaced.unwrap().kind, "minecraft:chest");
+    assert_eq!(document.block_entities().count(), 1);
+    let removed = document.remove_block_entity(&room, schematic_core::BlockPosition::new(0, 0, 0));
+    assert_eq!(removed.unwrap().kind, "minecraft:barrel");
+    assert_eq!(document.block_entities().count(), 0);
 }
 
 proptest! {

@@ -10,7 +10,7 @@
 - **Phase 5 — WASM Session Boundary (`schematic-wasm`)**: Complete (PR #8).
 - **Phase 6 — Three.js Renderer (`@schematic-ide/renderer`)**: Complete (PR #10).
 - **Phase 7 — First Vertical Slice & E2E (`apps/web` & Playwright)**: Complete (PR #10, PR #11).
-- **Phase 8 — IDE Hardening & v1.0 Completion**: Complete (Waves 8A–8G, PRs #13–#19).
+- **Phase 8 — IDE Hardening & v1.0 Completion**: Waves 8A–8G (PRs #13–#19), then the gap-closure work for issues #20–#34 (PR #35). Open v1 gaps: #36 (analysis performance), #37 (Litematica negative-size verification) and #38 (triangle count at 10M / hardware-GPU measurement).
 - **Phase 9+ — Advanced Features (Future Roadmap)**: Post-v1.0 enhancements.
 
 ---
@@ -54,10 +54,17 @@
 - **Problems Panel**:
   - Filterable list of validation diagnostics with position links and severity badges.
 
+### Gap closure — issues #20–#34 (PR #35)
+An audit found that several Wave 8 items marked complete were not:
+- **Data integrity**: block entity and entity NBT now live in the core document, follow every edit, and are undoable (#21). `.schem`/`.nbt` export flattens multi-region documents instead of truncating them (#20). Lossy conversions are listed and need confirmation (#22).
+- **Viewer**: face-culled chunk meshes with dirty-chunk updates and a packed binary transfer (#27); multi-region display (#28); raycast picking with multi-box selection (#24).
+- **IDE**: automatic repair (#25), drag & drop (#29), cross-format diff input (#30), Entities panel (#31).
+- **Infrastructure**: WASM built from source in CI (#23), realistic benchmarks (#26), build-time service worker precache (#32), real `minecraft-data` package (#33), reconciled docs (#34).
+
 ### Wave 8B — Structural Editing (Complete — PR #14)
 - **Advanced Editing Operations**:
   - **Fill**: Fill selected region/boxes with specified block state.
-  - **Copy / Paste**: Region-relative clipboard capturing blocks, block states, and block entities with safe translation.
+  - **Copy / Paste**: Region-relative clipboard capturing blocks and block states. Block entities and entities were added in #21.
   - **Move**: Cut selection and translate with full undo/redo.
   - **Rotate**: 90/180/270 degree rotation around Y axis with directional blockstate property transformation (facing, axis, shape, half, rotation).
   - **Mirror**: X and Z axis flipping with orientation property updates.
@@ -96,7 +103,7 @@
   - Synthetic benchmarks at 1M, 5M, and 10M block scale (`crates/schematic-wasm/tests/scale_benchmarks.rs`).
   - Measure parse latency, memory footprint, mesh build time, edit patch latency, and export time (`docs/benchmarks.md`).
 - **Chunked Pipeline Tuning**:
-  - Keep Web Worker message transfers zero-copy where possible and avoid blocking the UI thread.
+  - Planned here but not delivered in 8F: the mesh was still sent as JSON. Done in #27 (packed binary face stream, transferred).
 
 ### Wave 8G — PWA & Offline Application Shell (Complete — PR #19)
 - **PWA Deployment**:

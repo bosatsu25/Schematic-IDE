@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, 'feature/**', 'perf/**', 'chore/**', 'fix/**']
+    branches: [main, 'feature/**', 'perf/**', 'chore/**', 'fix/**', 'claude/**']
   pull_request:
 
 jobs:
@@ -29,8 +29,13 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Build WASM
+        run: pnpm build:wasm
       - name: Lint
         run: pnpm lint
       - name: Typecheck

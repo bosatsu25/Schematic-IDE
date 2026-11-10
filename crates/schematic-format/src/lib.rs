@@ -1,9 +1,14 @@
 pub mod bit_packing;
+pub mod convert;
 pub mod litematic;
 pub mod nbt;
 pub mod sponge;
 pub mod structure;
 
+pub use convert::{
+    conversion_report, merge_regions, ConversionLoss, ConversionReport, ExportTarget, LossSeverity,
+    MergedDocument, SourceExtras,
+};
 pub use litematic::{FormatError, LitematicDocument, RawRegionData};
 pub use nbt::{decode_gzip_or_raw, encode_gzip, read_nbt, write_nbt, NbtError, NbtTag};
 pub use sponge::SpongeSchematic;
@@ -30,7 +35,7 @@ pub fn detect_format(bytes: &[u8]) -> Result<SchematicFormatType, FormatError> {
         || (root.contains_key("Width")
             && root.contains_key("Height")
             && root.contains_key("Length")
-            && root.contains_key("BlockData"))
+            && (root.contains_key("BlockData") || root.contains_key("Blocks")))
     {
         return Ok(SchematicFormatType::SpongeSchematic);
     }

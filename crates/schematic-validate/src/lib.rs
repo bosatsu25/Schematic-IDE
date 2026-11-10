@@ -1,4 +1,4 @@
-use schematic_core::{BlockPosition, Document, Position, Region, CHUNK_EDGE};
+use schematic_core::{BlockPosition, Document, Region, CHUNK_EDGE};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -121,7 +121,7 @@ impl DocumentValidator {
                 format!("Region '{region_name}' has an empty palette"),
                 Some(region_name),
                 None,
-                Fixability::Automatic,
+                Fixability::Manual,
             ));
         } else {
             for (idx, state) in palette.iter() {
@@ -172,7 +172,7 @@ impl DocumentValidator {
                     ),
                     Some(region_name),
                     Some([wx, wy, wz]),
-                    Fixability::Automatic,
+                    Fixability::Manual,
                 ));
             }
 
@@ -222,7 +222,7 @@ impl DocumentValidator {
                                         ),
                                         Some(region_name),
                                         Some([wx, wy, wz]),
-                                        Fixability::Automatic,
+                                        Fixability::Manual,
                                     ));
                                 }
                             }
@@ -235,19 +235,55 @@ impl DocumentValidator {
 
     fn validate_block_entities(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
         for be in document.block_entities() {
-            let pos = be.position;
-            let contained = document.regions().any(|r| r.contains(pos));
-            if !contained {
+            let region_name = be.region.as_str();
+            let p = be.position;
+            let Some(region) = document.region(&be.region) else {
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticSeverity::Warning,
+                    "WARN_BLOCK_ENTITY_UNKNOWN_REGION",
+                    format!(
+                        "Block entity '{}' references missing region '{region_name}'",
+                        be.kind
+                    ),
+                    Some(region_name),
+                    None,
+                    Fixability::Automatic,
+                ));
+                continue;
+            };
+            let world = world_of(region, p);
+            let size = region.size();
+            let inside = p.x >= 0
+                && p.y >= 0
+                && p.z >= 0
+                && p.x < size.x as i64
+                && p.y < size.y as i64
+                && p.z < size.z as i64;
+            if !inside {
                 diagnostics.push(Diagnostic::new(
                     DiagnosticSeverity::Warning,
                     "WARN_BLOCK_ENTITY_OUTSIDE_REGIONS",
                     format!(
-                        "Block entity '{}' at ({}, {}, {}) is not contained within any region",
-                        be.kind, pos.x, pos.y, pos.z
+                        "Block entity '{}' at local ({}, {}, {}) is outside region '{region_name}'",
+                        be.kind, p.x, p.y, p.z
                     ),
-                    None::<String>,
-                    Some([pos.x, pos.y, pos.z]),
-                    Fixability::Manual,
+                    Some(region_name),
+                    Some(world),
+                    Fixability::Automatic,
+                ));
+                continue;
+            }
+            if region.block_index_at(p).ok().flatten().is_none() {
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticSeverity::Warning,
+                    "WARN_ORPHAN_BLOCK_ENTITY",
+                    format!(
+                        "Block entity '{}' at local ({}, {}, {}) in region '{region_name}' has no block (air)",
+                        be.kind, p.x, p.y, p.z
+                    ),
+                    Some(region_name),
+                    Some(world),
+                    Fixability::Automatic,
                 ));
             }
         }
@@ -255,26 +291,53 @@ impl DocumentValidator {
 
     fn validate_entities(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
         for ent in document.entities() {
-            let px = ent.position[0].floor() as i32;
-            let py = ent.position[1].floor() as i32;
-            let pz = ent.position[2].floor() as i32;
-            let pos = Position::new(px, py, pz);
-            let contained = document.regions().any(|r| r.contains(pos));
-            if !contained {
+            let region_name = ent.region.as_str();
+            let Some(region) = document.region(&ent.region) else {
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticSeverity::Warning,
+                    "WARN_ENTITY_UNKNOWN_REGION",
+                    format!(
+                        "Entity '{}' references missing region '{region_name}'",
+                        ent.kind
+                    ),
+                    Some(region_name),
+                    None,
+                    Fixability::Automatic,
+                ));
+                continue;
+            };
+            let cell = ent.block_position();
+            let size = region.size();
+            let inside = cell.x >= 0
+                && cell.y >= 0
+                && cell.z >= 0
+                && cell.x < size.x as i64
+                && cell.y < size.y as i64
+                && cell.z < size.z as i64;
+            if !inside {
                 diagnostics.push(Diagnostic::new(
                     DiagnosticSeverity::Info,
                     "INFO_ENTITY_OUTSIDE_REGIONS",
                     format!(
-                        "Entity '{}' at ({:.1}, {:.1}, {:.1}) is outside all region bounding boxes",
+                        "Entity '{}' at local ({:.1}, {:.1}, {:.1}) is outside region '{region_name}'",
                         ent.kind, ent.position[0], ent.position[1], ent.position[2]
                     ),
-                    None::<String>,
-                    Some([px, py, pz]),
+                    Some(region_name),
+                    Some(world_of(region, cell)),
                     Fixability::None,
                 ));
             }
         }
     }
+}
+
+fn world_of(region: &Region, local: BlockPosition) -> [i32; 3] {
+    let o = region.origin();
+    [
+        (o.x as i64 + local.x) as i32,
+        (o.y as i64 + local.y) as i32,
+        (o.z as i64 + local.z) as i32,
+    ]
 }
 
 pub fn validate_document(document: &Document) -> Vec<Diagnostic> {

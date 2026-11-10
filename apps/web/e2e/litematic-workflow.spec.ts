@@ -160,8 +160,16 @@ test.describe('End-to-End Litematic Browser Workflow', () => {
 
     // 13. Multi-format export: Sponge (.schem)
     await page.getByTestId('export-format-select').selectOption('sponge');
-    const downloadSpongePromise = page.waitForEvent('download');
+    // Cross-format export first lists what the target format cannot hold (#22).
     await page.getByTestId('export-btn').click();
+    await expect(page.getByTestId('export-loss-dialog')).toBeVisible();
+    await expect(page.getByTestId('export-loss-METADATA_DROPPED')).toContainText('description');
+    // Cancelling writes nothing.
+    await page.getByTestId('export-loss-cancel').click();
+    await expect(page.getByTestId('export-loss-dialog')).toHaveCount(0);
+    await page.getByTestId('export-btn').click();
+    const downloadSpongePromise = page.waitForEvent('download');
+    await page.getByTestId('export-loss-confirm').click();
     const downloadSponge = await downloadSpongePromise;
     expect(downloadSponge.suggestedFilename()).toContain('.schem');
     const spongeExportPath = path.resolve(__dirname, '../test-results/exported.schem');
@@ -176,8 +184,11 @@ test.describe('End-to-End Litematic Browser Workflow', () => {
 
     // 14. Multi-format export: Structure (.nbt)
     await page.getByTestId('export-format-select').selectOption('structure');
-    const downloadStructPromise = page.waitForEvent('download');
     await page.getByTestId('export-btn').click();
+    await expect(page.getByTestId('export-loss-dialog')).toBeVisible();
+    await expect(page.getByTestId('export-loss-METADATA_DROPPED')).toBeVisible();
+    const downloadStructPromise = page.waitForEvent('download');
+    await page.getByTestId('export-loss-confirm').click();
     const downloadStruct = await downloadStructPromise;
     expect(downloadStruct.suggestedFilename()).toContain('.nbt');
     const structExportPath = path.resolve(__dirname, '../test-results/exported.nbt');

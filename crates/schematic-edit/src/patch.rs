@@ -1,5 +1,6 @@
 use schematic_core::{
-    BlockPosition, BlockState, ChunkPosition, Document, PaletteIndex, RegionBlockError, RegionId,
+    BlockEntityRef, BlockPosition, BlockState, ChunkPosition, Document, EntityRef, PaletteIndex,
+    RegionBlockError, RegionId,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -63,10 +64,28 @@ impl Patch {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// A change to the block entity stored at one region-local position.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockEntityChange {
+    pub region: RegionId,
+    pub position: BlockPosition,
+    pub before: Option<BlockEntityRef>,
+    pub after: Option<BlockEntityRef>,
+}
+
+/// Removal (`before`), insertion (`after`) or replacement of one entity.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EntityChange {
+    pub before: Option<EntityRef>,
+    pub after: Option<EntityRef>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct PatchSet {
     patches: Vec<Patch>,
     palette_additions: Vec<PaletteAddition>,
+    block_entity_changes: Vec<BlockEntityChange>,
+    entity_changes: Vec<EntityChange>,
 }
 
 impl PatchSet {
@@ -74,6 +93,8 @@ impl PatchSet {
         Self {
             patches: Vec::new(),
             palette_additions: Vec::new(),
+            block_entity_changes: Vec::new(),
+            entity_changes: Vec::new(),
         }
     }
 
@@ -117,7 +138,67 @@ impl PatchSet {
         Self {
             patches,
             palette_additions,
+            block_entity_changes: Vec::new(),
+            entity_changes: Vec::new(),
         }
+    }
+
+    /// Combines two patch sets (e.g. edits to several regions). Both must
+    /// have been planned against the same document state and touch disjoint
+    /// blocks.
+    pub fn merge(mut self, other: PatchSet) -> Self {
+        self.patches.extend(other.patches);
+        self.palette_additions.extend(other.palette_additions);
+        self.block_entity_changes.extend(other.block_entity_changes);
+        self.entity_changes.extend(other.entity_changes);
+        self
+    }
+
+    /// Attaches block entity and entity changes to this patch set.
+    pub fn with_entity_changes(
+        mut self,
+        block_entity_changes: impl IntoIterator<Item = BlockEntityChange>,
+        entity_changes: impl IntoIterator<Item = EntityChange>,
+    ) -> Self {
+        self.block_entity_changes.extend(block_entity_changes);
+        self.entity_changes.extend(entity_changes);
+        self
+    }
+
+    pub fn block_entity_changes(&self) -> impl Iterator<Item = &BlockEntityChange> {
+        self.block_entity_changes.iter()
+    }
+
+    pub fn entity_changes(&self) -> impl Iterator<Item = &EntityChange> {
+        self.entity_changes.iter()
+    }
+
+    /// The block state a palette index refers to once this patch is applied:
+    /// either an existing palette entry or one this patch adds.
+    pub fn planned_state<'a>(
+        &'a self,
+        document: &'a Document,
+        region_id: &RegionId,
+        index: PaletteIndex,
+    ) -> Option<&'a BlockState> {
+        document
+            .region(region_id)
+            .and_then(|r| r.palette().get(index))
+            .or_else(|| {
+                self.palette_additions
+                    .iter()
+                    .find(|a| &a.region_id == region_id && a.index == index)
+                    .map(|a| &a.state)
+            })
+    }
+
+    /// Palette entries this patch adds, as `(region, index, state)`.
+    pub fn palette_additions(
+        &self,
+    ) -> impl Iterator<Item = (&RegionId, PaletteIndex, &BlockState)> {
+        self.palette_additions
+            .iter()
+            .map(|a| (&a.region_id, a.index, &a.state))
     }
 
     pub fn patches(&self) -> impl Iterator<Item = &Patch> {
@@ -130,6 +211,8 @@ impl PatchSet {
 
     pub fn is_empty(&self) -> bool {
         self.patches.is_empty()
+            && self.block_entity_changes.is_empty()
+            && self.entity_changes.is_empty()
     }
 
     pub fn change_at(&self, region_id: &RegionId, position: BlockPosition) -> Option<&BlockChange> {
@@ -163,6 +246,24 @@ impl PatchSet {
         Self {
             patches,
             palette_additions: Vec::new(),
+            block_entity_changes: self
+                .block_entity_changes
+                .iter()
+                .map(|c| BlockEntityChange {
+                    region: c.region.clone(),
+                    position: c.position,
+                    before: c.after.clone(),
+                    after: c.before.clone(),
+                })
+                .collect(),
+            entity_changes: self
+                .entity_changes
+                .iter()
+                .map(|c| EntityChange {
+                    before: c.after.clone(),
+                    after: c.before.clone(),
+                })
+                .collect(),
         }
     }
 
@@ -213,6 +314,30 @@ impl PatchSet {
                     .map_err(PatchError::RegionBlock)?;
             }
         }
+
+        for change in &self.block_entity_changes {
+            match direction.target_ref(&change.before, &change.after) {
+                Some(be) => {
+                    document.add_block_entity(be.clone());
+                }
+                None => {
+                    document.remove_block_entity(&change.region, change.position);
+                }
+            }
+        }
+
+        for change in &self.entity_changes {
+            if let Some(old) = direction.expected_ref(&change.before, &change.after) {
+                if !document.remove_entity(old) {
+                    return Err(PatchError::EntityConflict);
+                }
+            }
+        }
+        for change in &self.entity_changes {
+            if let Some(new) = direction.target_ref(&change.before, &change.after) {
+                document.add_entity(new.clone());
+            }
+        }
         document.increment_revision();
         Ok(())
     }
@@ -238,6 +363,17 @@ impl PatchSet {
                         actual,
                     });
                 }
+            }
+        }
+
+        for change in &self.block_entity_changes {
+            let actual = document.block_entity_at(&change.region, change.position);
+            let expected = direction.expected_ref(&change.before, &change.after);
+            if actual != expected {
+                return Err(PatchError::BlockEntityConflict {
+                    region_id: change.region.clone(),
+                    position: change.position,
+                });
             }
         }
 
@@ -309,6 +445,20 @@ enum Direction {
 }
 
 impl Direction {
+    fn expected_ref<'a, T>(self, before: &'a Option<T>, after: &'a Option<T>) -> Option<&'a T> {
+        match self {
+            Self::Forward => before.as_ref(),
+            Self::Reverse => after.as_ref(),
+        }
+    }
+
+    fn target_ref<'a, T>(self, before: &'a Option<T>, after: &'a Option<T>) -> Option<&'a T> {
+        match self {
+            Self::Forward => after.as_ref(),
+            Self::Reverse => before.as_ref(),
+        }
+    }
+
     const fn expected(
         self,
         before: Option<PaletteIndex>,
@@ -351,6 +501,11 @@ pub enum PatchError {
     },
     InvalidChunkGrouping,
     RegionBlock(RegionBlockError),
+    BlockEntityConflict {
+        region_id: RegionId,
+        position: BlockPosition,
+    },
+    EntityConflict,
 }
 
 impl Display for PatchError {
@@ -384,6 +539,20 @@ impl Display for PatchError {
             ),
             Self::InvalidChunkGrouping => formatter.write_str("patch contains a block in the wrong chunk"),
             Self::RegionBlock(error) => Display::fmt(error, formatter),
+            Self::BlockEntityConflict {
+                region_id,
+                position,
+            } => write!(
+                formatter,
+                "block entity conflict in region '{}' at ({}, {}, {})",
+                region_id.as_str(),
+                position.x,
+                position.y,
+                position.z
+            ),
+            Self::EntityConflict => {
+                formatter.write_str("entity to remove is not present in the document")
+            }
         }
     }
 }

@@ -214,8 +214,16 @@ test.describe('End-to-End Litematic Browser Workflow', () => {
     await page.getByTestId('material-search').fill('diorite');
     await expect(page.getByTestId('materials-table')).toContainText('diorite');
 
-    // Test Copy CSV
+    // Copy CSV: without clipboard permission the button reports the failure...
+    await page.getByTestId('copy-materials-csv').click();
+    await expect(page.getByTestId('copy-materials-csv')).toHaveText('Copy failed');
+    // ...and with permission the CSV really lands on the clipboard.
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await expect(page.getByTestId('copy-materials-csv')).toHaveText('Copy CSV');
     await page.getByTestId('copy-materials-csv').click();
     await expect(page.getByTestId('copy-materials-csv')).toHaveText('Copied CSV!');
+    const csv = await page.evaluate(() => navigator.clipboard.readText());
+    expect(csv.split('\n')[0]).toBe('Block,Count,Stacks (64),Remainder,Percentage (%)');
+    expect(csv).toContain('minecraft:diorite');
   });
 });

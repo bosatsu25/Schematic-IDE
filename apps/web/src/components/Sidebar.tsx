@@ -48,7 +48,7 @@ export const Sidebar: React.FC = () => {
     z: 0,
   });
   const [materialSearch, setMaterialSearch] = useState('');
-  const [copiedCsv, setCopiedCsv] = useState(false);
+  const [copyCsvState, setCopyCsvState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const handleCopyCsv = () => {
     if (!analysisReport) return;
@@ -59,15 +59,20 @@ export const Sidebar: React.FC = () => {
           `"${m.id.replace(/"/g, '""')}",${m.count},${m.stacks_64},${m.remainder},${m.percentage.toFixed(2)}`,
       )
       .join('\n');
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(header + rows);
-      }
-    } catch {
-      // ignore clipboard error in unpermitted environments
+    const done = (ok: boolean) => {
+      setCopyCsvState(ok ? 'copied' : 'failed');
+      setTimeout(() => setCopyCsvState('idle'), 2000);
+    };
+    if (!navigator.clipboard?.writeText) {
+      done(false);
+      return;
     }
-    setCopiedCsv(true);
-    setTimeout(() => setCopiedCsv(false), 2000);
+    // The browser may refuse (permissions, insecure context): say so instead
+    // of claiming the copy worked.
+    navigator.clipboard.writeText(header + rows).then(
+      () => done(true),
+      () => done(false),
+    );
   };
 
   const filteredMaterials = analysisReport
@@ -985,7 +990,11 @@ export const Sidebar: React.FC = () => {
                     data-testid="copy-materials-csv"
                     onClick={handleCopyCsv}
                   >
-                    {copiedCsv ? 'Copied CSV!' : 'Copy CSV'}
+                    {copyCsvState === 'copied'
+                      ? 'Copied CSV!'
+                      : copyCsvState === 'failed'
+                        ? 'Copy failed'
+                        : 'Copy CSV'}
                   </button>
                 </div>
 

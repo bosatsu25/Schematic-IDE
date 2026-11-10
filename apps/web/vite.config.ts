@@ -1,6 +1,6 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import { serviceWorkerPlugin } from './service-worker/plugin';
+import { serviceWorkerPlugin } from './service-worker/plugin.ts';
 
 export default defineConfig({
   // Relative asset URLs: the same build works at a domain root, under a

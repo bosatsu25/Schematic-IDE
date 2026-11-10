@@ -245,11 +245,10 @@ impl LitematicDocument {
                                     continue;
                                 }
 
-                                let lx = if sx >= 0 { dx } else { len_x - 1 - dx } as i64;
-                                let ly = if sy >= 0 { dy } else { len_y - 1 - dy } as i64;
-                                let lz = if sz >= 0 { dz } else { len_z - 1 - dz } as i64;
-
-                                let local_pos = BlockPosition::new(lx, ly, lz);
+                                // The container is always indexed from the
+                                // region's minimum corner, whatever the sign
+                                // of Size (see `EntityFrame`).
+                                let local_pos = BlockPosition::new(dx as i64, dy as i64, dz as i64);
                                 region
                                     .set_block_index(
                                         local_pos,
@@ -265,8 +264,8 @@ impl LitematicDocument {
                     }
                 }
 
-                // Block Entities (container coordinates, mapped like blocks)
-                let flip = AxisFlip::new([sx, sy, sz]);
+                // Block Entities: x/y/z are container coordinates (minimum corner).
+                let frame = EntityFrame::new([sx, sy, sz]);
                 if let Some(be_list) = reg_compound.get("TileEntities").and_then(|t| t.as_list()) {
                     for be_tag in be_list {
                         let Some(be_comp) = be_tag.as_compound() else {
@@ -279,8 +278,12 @@ impl LitematicDocument {
                         let by = take_int(&mut data, "y").unwrap_or(0);
                         let bz = take_int(&mut data, "z").unwrap_or(0);
                         document.add_block_entity(
-                            BlockEntityRef::new(region_id.clone(), id, flip.block([bx, by, bz]))
-                                .with_data(data),
+                            BlockEntityRef::new(
+                                region_id.clone(),
+                                id,
+                                BlockPosition::new(bx as i64, by as i64, bz as i64),
+                            )
+                            .with_data(data),
                         );
                     }
                 }
@@ -296,7 +299,8 @@ impl LitematicDocument {
                             .unwrap_or_else(|| "unknown".to_string());
                         let pos = take_double_list(&mut data, "Pos").unwrap_or([0.0; 3]);
                         document.add_entity(
-                            EntityRef::new(region_id.clone(), id, flip.point(pos)).with_data(data),
+                            EntityRef::new(region_id.clone(), id, frame.to_local(pos))
+                                .with_data(data),
                         );
                     }
                 }
@@ -537,10 +541,7 @@ impl LitematicDocument {
             for dy in 0..len_y {
                 for dz in 0..len_z {
                     for dx in 0..len_x {
-                        let lx = if sx >= 0 { dx } else { len_x - 1 - dx } as i64;
-                        let ly = if sy >= 0 { dy } else { len_y - 1 - dy } as i64;
-                        let lz = if sz >= 0 { dz } else { len_z - 1 - dz } as i64;
-                        let local_pos = BlockPosition::new(lx, ly, lz);
+                        let local_pos = BlockPosition::new(dx as i64, dy as i64, dz as i64);
 
                         let p_idx = match region.block_index_at(local_pos).ok().flatten() {
                             Some(idx) => {
@@ -564,11 +565,11 @@ impl LitematicDocument {
             reg_compound.insert("BlockStates".to_string(), NbtTag::LongArray(packed));
 
             // Block Entities & Entities (from the edited document)
-            let flip = AxisFlip::new([sx, sy, sz]);
+            let frame = EntityFrame::new([sx, sy, sz]);
             let mut tile_entities = Vec::new();
             for be in doc.block_entities_in(region.id()) {
                 let mut compound = be.data.clone();
-                let [x, y, z] = flip.unblock(be.position);
+                let [x, y, z] = be.position.coordinates().map(|v| v as i32);
                 compound.insert("id".to_string(), NbtTag::String(be.kind.clone()));
                 compound.insert("x".to_string(), NbtTag::Int(x));
                 compound.insert("y".to_string(), NbtTag::Int(y));
@@ -581,7 +582,10 @@ impl LitematicDocument {
             for entity in doc.entities_in(region.id()) {
                 let mut compound = entity.data.clone();
                 compound.insert("id".to_string(), NbtTag::String(entity.kind.clone()));
-                compound.insert("Pos".to_string(), double_list(flip.point(entity.position)));
+                compound.insert(
+                    "Pos".to_string(),
+                    double_list(frame.from_local(entity.position)),
+                );
                 entities.push(NbtTag::Compound(compound));
             }
             reg_compound.insert("Entities".to_string(), NbtTag::List(10, entities));
@@ -618,53 +622,42 @@ impl LitematicDocument {
     }
 }
 
-/// Maps Litematica container coordinates to region-local coordinates using the
-/// same per-axis flip applied to blocks for negative region sizes.
-struct AxisFlip {
-    len: [i64; 3],
-    negative: [bool; 3],
+/// Litematica coordinate conventions for a region whose `Size` may be negative.
+///
+/// - `Position` is the region's primary corner. When a `Size` component is
+///   negative the region extends towards negative coordinates, so the minimum
+///   corner is `Position + Size + 1` on that axis.
+/// - `BlockStates` and `TileEntities` coordinates are always relative to the
+///   **minimum corner** (container coordinates); they are never mirrored.
+/// - Entity `Pos` is relative to `Position` (the primary corner), so on a
+///   negative axis it lies in `(Size, 0]` and is shifted by `|Size| - 1` to
+///   reach region-local (minimum-corner) coordinates.
+///
+/// This matches independent readers of the format; verifying it against a
+/// file written by Litematica itself is tracked in issue #37.
+struct EntityFrame {
+    shift: [f64; 3],
 }
 
-impl AxisFlip {
+impl EntityFrame {
     fn new(size: [i32; 3]) -> Self {
         Self {
-            len: size.map(|s| s.unsigned_abs() as i64),
-            negative: size.map(|s| s < 0),
+            shift: size.map(|s| {
+                if s < 0 {
+                    (s.unsigned_abs() as f64) - 1.0
+                } else {
+                    0.0
+                }
+            }),
         }
     }
 
-    fn block(&self, c: [i32; 3]) -> BlockPosition {
-        let m = |i: usize| {
-            let v = c[i] as i64;
-            if self.negative[i] {
-                self.len[i] - 1 - v
-            } else {
-                v
-            }
-        };
-        BlockPosition::new(m(0), m(1), m(2))
+    fn to_local(&self, p: [f64; 3]) -> [f64; 3] {
+        [0, 1, 2].map(|i| p[i] + self.shift[i])
     }
 
-    fn unblock(&self, p: BlockPosition) -> [i32; 3] {
-        let c = p.coordinates();
-        [0, 1, 2].map(|i| {
-            if self.negative[i] {
-                (self.len[i] - 1 - c[i]) as i32
-            } else {
-                c[i] as i32
-            }
-        })
-    }
-
-    /// Continuous mapping; an involution, so it serves both directions.
-    fn point(&self, p: [f64; 3]) -> [f64; 3] {
-        [0, 1, 2].map(|i| {
-            if self.negative[i] {
-                self.len[i] as f64 - p[i]
-            } else {
-                p[i]
-            }
-        })
+    fn from_local(&self, p: [f64; 3]) -> [f64; 3] {
+        [0, 1, 2].map(|i| p[i] - self.shift[i])
     }
 }
 

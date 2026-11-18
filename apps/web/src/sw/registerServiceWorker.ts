@@ -39,8 +39,13 @@ export function applyUpdate(): void {
   waitingWorker.postMessage({ type: 'SKIP_WAITING' });
 }
 
-export function registerServiceWorker(scriptUrl = '/sw.js'): void {
+/**
+ * Registers the service worker. By default `sw.js` is resolved next to the
+ * page, so the app works when hosted under a sub-path.
+ */
+export function registerServiceWorker(scriptUrl?: string): void {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  const url = scriptUrl ?? new URL('sw.js', document.baseURI).href;
   const container = navigator.serviceWorker;
 
   let reloading = false;
@@ -62,7 +67,7 @@ export function registerServiceWorker(scriptUrl = '/sw.js'): void {
   };
 
   container
-    .register(scriptUrl)
+    .register(url)
     .then((registration) => {
       if (registration.waiting && container.controller) {
         notifyUpdateAvailable(registration.waiting);

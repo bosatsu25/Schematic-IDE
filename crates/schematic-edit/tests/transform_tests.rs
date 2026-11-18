@@ -323,3 +323,194 @@ fn test_rotate_and_mirror_commands() {
     // Facing "east" mirrored along X becomes "west"
     assert_eq!(mirrored_stair.property("facing"), Some("west"));
 }
+
+// ---------------------------------------------------------------------------
+// Connection flags, rail shapes and handedness (first-release hardening)
+// ---------------------------------------------------------------------------
+
+fn state_with(id: &str, props: &[(&str, &str)]) -> BlockState {
+    BlockState::new(
+        id,
+        props
+            .iter()
+            .map(|(k, v)| BlockProperty::new(*k, *v))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn rotation_moves_connection_flags_of_fences_walls_and_panes() {
+    // Connected to the north and east only.
+    let fence = state_with(
+        "minecraft:oak_fence",
+        &[
+            ("north", "true"),
+            ("east", "true"),
+            ("south", "false"),
+            ("west", "false"),
+            ("waterlogged", "false"),
+        ],
+    );
+    let rotated = rotate_block_state(&fence, RotationAngle::Deg90);
+    // North -> east, east -> south.
+    assert_eq!(rotated.property("north"), Some("false"));
+    assert_eq!(rotated.property("east"), Some("true"));
+    assert_eq!(rotated.property("south"), Some("true"));
+    assert_eq!(rotated.property("west"), Some("false"));
+    assert_eq!(rotated.property("waterlogged"), Some("false"));
+
+    // Walls use low/tall/none values; the flags still move with the block.
+    let wall = state_with(
+        "minecraft:cobblestone_wall",
+        &[
+            ("north", "tall"),
+            ("east", "none"),
+            ("south", "low"),
+            ("west", "none"),
+            ("up", "true"),
+        ],
+    );
+    let turned = rotate_block_state(&wall, RotationAngle::Deg180);
+    assert_eq!(turned.property("south"), Some("tall"));
+    assert_eq!(turned.property("north"), Some("low"));
+    assert_eq!(turned.property("up"), Some("true"));
+
+    let mirrored = mirror_block_state(&fence, MirrorAxis::X);
+    assert_eq!(mirrored.property("east"), Some("false"));
+    assert_eq!(mirrored.property("west"), Some("true"));
+    assert_eq!(mirrored.property("north"), Some("true"));
+}
+
+#[test]
+fn rotation_and_mirror_remap_rail_shapes() {
+    let rail = |shape: &str| state_with("minecraft:rail", &[("shape", shape)]);
+    let rot = |shape: &str, angle| {
+        rotate_block_state(&rail(shape), angle)
+            .property("shape")
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(rot("north_south", RotationAngle::Deg90), "east_west");
+    assert_eq!(rot("east_west", RotationAngle::Deg90), "north_south");
+    assert_eq!(rot("north_south", RotationAngle::Deg180), "north_south");
+    assert_eq!(
+        rot("ascending_north", RotationAngle::Deg90),
+        "ascending_east"
+    );
+    assert_eq!(
+        rot("ascending_west", RotationAngle::Deg270),
+        "ascending_south"
+    );
+    // Corner connecting south and east -> connects west and south.
+    assert_eq!(rot("south_east", RotationAngle::Deg90), "south_west");
+    assert_eq!(rot("south_west", RotationAngle::Deg90), "north_west");
+    assert_eq!(rot("north_west", RotationAngle::Deg90), "north_east");
+    assert_eq!(rot("north_east", RotationAngle::Deg90), "south_east");
+
+    let mir = |shape: &str, axis| {
+        mirror_block_state(&rail(shape), axis)
+            .property("shape")
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(mir("south_east", MirrorAxis::X), "south_west");
+    assert_eq!(mir("south_east", MirrorAxis::Z), "north_east");
+    assert_eq!(mir("ascending_east", MirrorAxis::X), "ascending_west");
+    assert_eq!(mir("north_south", MirrorAxis::Z), "north_south");
+}
+
+#[test]
+fn stair_shapes_survive_rotation_and_flip_under_mirror() {
+    let stairs = state_with(
+        "minecraft:oak_stairs",
+        &[
+            ("facing", "north"),
+            ("half", "bottom"),
+            ("shape", "inner_left"),
+        ],
+    );
+    let rotated = rotate_block_state(&stairs, RotationAngle::Deg90);
+    assert_eq!(rotated.property("facing"), Some("east"));
+    assert_eq!(rotated.property("shape"), Some("inner_left"));
+    let mirrored = mirror_block_state(&stairs, MirrorAxis::X);
+    assert_eq!(mirrored.property("facing"), Some("north"));
+    assert_eq!(mirrored.property("shape"), Some("inner_right"));
+}
+
+#[test]
+fn mirror_swaps_door_hinges_and_double_chest_halves_but_not_slab_types() {
+    let door = state_with(
+        "minecraft:oak_door",
+        &[("facing", "east"), ("half", "lower"), ("hinge", "left")],
+    );
+    let mirrored = mirror_block_state(&door, MirrorAxis::X);
+    assert_eq!(mirrored.property("facing"), Some("west"));
+    assert_eq!(mirrored.property("hinge"), Some("right"));
+    assert_eq!(
+        rotate_block_state(&door, RotationAngle::Deg90).property("hinge"),
+        Some("left"),
+        "rotation keeps handedness"
+    );
+
+    let chest = state_with("minecraft:chest", &[("facing", "north"), ("type", "left")]);
+    assert_eq!(
+        mirror_block_state(&chest, MirrorAxis::X).property("type"),
+        Some("right")
+    );
+    let slab = state_with("minecraft:oak_slab", &[("type", "top")]);
+    assert_eq!(
+        mirror_block_state(&slab, MirrorAxis::Z).property("type"),
+        Some("top")
+    );
+}
+
+#[test]
+fn four_rotations_and_two_mirrors_are_identity_for_every_orientation_property() {
+    let states = [
+        state_with(
+            "minecraft:glass_pane",
+            &[
+                ("north", "true"),
+                ("east", "false"),
+                ("south", "true"),
+                ("west", "true"),
+            ],
+        ),
+        state_with("minecraft:rail", &[("shape", "south_east")]),
+        state_with(
+            "minecraft:powered_rail",
+            &[("shape", "ascending_north"), ("powered", "true")],
+        ),
+        state_with(
+            "minecraft:oak_door",
+            &[("facing", "south"), ("hinge", "right"), ("half", "upper")],
+        ),
+        state_with(
+            "minecraft:redstone_wire",
+            &[
+                ("north", "side"),
+                ("east", "up"),
+                ("south", "none"),
+                ("west", "side"),
+                ("power", "7"),
+            ],
+        ),
+    ];
+    for state in &states {
+        let mut rotated = state.clone();
+        for _ in 0..4 {
+            rotated = rotate_block_state(&rotated, RotationAngle::Deg90);
+        }
+        assert_eq!(&rotated, state, "4 x 90 degrees");
+        let twice = rotate_block_state(
+            &rotate_block_state(state, RotationAngle::Deg180),
+            RotationAngle::Deg180,
+        );
+        assert_eq!(&twice, state, "2 x 180 degrees");
+        for axis in [MirrorAxis::X, MirrorAxis::Z] {
+            let back = mirror_block_state(&mirror_block_state(state, axis), axis);
+            assert_eq!(&back, state, "2 x mirror");
+        }
+    }
+}

@@ -1,0 +1,118 @@
+name: Release
+
+# Publishes a GitHub Release (built site attached as a zip) for every pushed
+# `v*` tag. Deploys to GitHub Pages too when the repository variable
+# DEPLOY_PAGES is "true". See docs/release.md.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(node -p "require('./apps/web/package.json').version")"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match apps/web/package.json version ${version}" >&2
+            exit 1
+          fi
+          if ! grep -q "^## \[${version}\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for ${version}" >&2
+            exit 1
+          fi
+
+      - name: Rust checks
+        run: |
+          cargo fmt --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-targets
+
+      - name: Frontend checks and build
+        run: |
+          pnpm build:wasm
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+
+      - name: Browser tests
+        run: |
+          pnpm --filter @schematic-ide/web exec playwright install --with-deps chromium
+          pnpm --filter @schematic-ide/web test:e2e
+
+      - name: Package the site
+        run: |
+          name="schematic-ide-${GITHUB_REF_NAME//\//-}"
+          (cd apps/web/dist && zip -qr "../../../${name}.zip" .)
+          echo "ARCHIVE=${name}.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+      - name: Upload Pages artifact
+        if: vars.DEPLOY_PAGES == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Release notes: this version's section of CHANGELOG.md.
+          awk -v v="$version" '
+            /^## \[/ { printing = index($0, "## [" v "]") == 1; next }
+            /^\[[^]]+\]: / { next }
+            printing { print }
+          ' CHANGELOG.md > release-notes.md
+          gh release create "$GITHUB_REF_NAME" "$ARCHIVE" \
+            --verify-tag \
+            --title "Schematic IDE ${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md
+
+  pages:
+    if: vars.DEPLOY_PAGES == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

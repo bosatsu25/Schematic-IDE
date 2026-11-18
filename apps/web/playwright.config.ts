@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 const DEV_PORT = 5173;
 const PREVIEW_PORT = 4173;
+const PREVIEW_BASE = '/schematic-ide/';
 
 export default defineConfig({
   testDir: './e2e',
@@ -21,7 +22,8 @@ export default defineConfig({
       // Production-only behaviour (service worker, offline) against `vite preview`.
       name: 'preview',
       testMatch: /\.preview\.spec\.ts$/,
-      use: { baseURL: `http://localhost:${PREVIEW_PORT}` },
+      // Served under a sub-path, like a GitHub Pages project site.
+      use: { baseURL: `http://localhost:${PREVIEW_PORT}${PREVIEW_BASE}` },
     },
   ],
   webServer: [
@@ -35,8 +37,8 @@ export default defineConfig({
     },
     {
       // Always serve a fresh production build in CI so sw.js matches the code.
-      command: `pnpm build && pnpm preview --port ${PREVIEW_PORT} --strictPort`,
-      port: PREVIEW_PORT,
+      command: `pnpm build && node ../../scripts/serve-static.mjs dist ${PREVIEW_PORT} ${PREVIEW_BASE}`,
+      url: `http://localhost:${PREVIEW_PORT}${PREVIEW_BASE}`,
       reuseExistingServer: !process.env.CI,
       timeout: 180000,
     },

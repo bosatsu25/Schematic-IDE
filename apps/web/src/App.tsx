@@ -75,6 +75,7 @@ export const App: React.FC = () => {
       </main>
 
       <footer className="status-bar" data-testid="status-bar">
+        <span data-testid="app-version">v{__APP_VERSION__}</span>
         <span>Status: {status.loaded ? 'Ready' : 'No document'}</span>
         {document && <span>Regions: {document.regions.length}</span>}
         {selectedRegionId && <span>Active Region: {selectedRegionId}</span>}

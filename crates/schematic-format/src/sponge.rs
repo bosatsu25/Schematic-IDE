@@ -1,6 +1,8 @@
 use crate::{
     convert::merge_regions,
-    litematic::{double_list, take_double_list, take_string, FormatError},
+    litematic::{
+        double_list, region_fits, region_volume, take_double_list, take_string, FormatError,
+    },
     nbt::{decode_gzip_or_raw, encode_gzip, NbtTag},
 };
 use schematic_core::{
@@ -127,6 +129,14 @@ impl SpongeSchematic {
 
         let region_id = RegionId::new("Main");
         let size = Size::new(width, height, length);
+        let total_blocks = region_volume(width, height, length)
+            .filter(|_| region_fits([origin.x, origin.y, origin.z], [width, height, length]))
+            .ok_or_else(|| {
+                FormatError::InvalidStructure(format!(
+                    "Schematic size {width}x{height}x{length} at offset ({}, {}, {}) is out of range",
+                    origin.x, origin.y, origin.z
+                ))
+            })?;
         let mut region = Region::new(region_id.clone(), origin, size);
 
         // v3 nests block data in a "Blocks" container.
@@ -163,39 +173,41 @@ impl SpongeSchematic {
             palette_map.insert(id, state);
         }
 
-        let max_id = palette_map.keys().copied().max().unwrap_or(0).max(0);
-        let mut palette_states: Vec<Option<BlockState>> = vec![None; (max_id + 1) as usize];
-        for (id, state) in palette_map {
-            if id >= 0 {
-                palette_states[id as usize] = Some(state);
+        // Sponge palette id -> region palette index (air ids map to nothing).
+        // Kept as a map: ids come from the file and may be huge or negative.
+        let mut region_pal_indices: BTreeMap<i32, schematic_core::PaletteIndex> = BTreeMap::new();
+        for (id, state) in &palette_map {
+            if !AIR_IDS.contains(&state.id()) {
+                let idx = region
+                    .palette_mut()
+                    .intern(state.clone())
+                    .map_err(|e| FormatError::InvalidStructure(format!("Palette error: {e}")))?;
+                region_pal_indices.insert(*id, idx);
             }
         }
 
-        let mut region_pal_indices = Vec::with_capacity(palette_states.len());
-        for st_opt in &palette_states {
-            match st_opt {
-                Some(st) if !AIR_IDS.contains(&st.id()) => {
-                    let idx = region.palette_mut().intern(st.clone()).map_err(|e| {
-                        FormatError::InvalidStructure(format!("Palette error: {e}"))
-                    })?;
-                    region_pal_indices.push(Some(idx));
-                }
-                _ => region_pal_indices.push(None),
-            }
-        }
-
-        let total_blocks = (width as usize) * (height as usize) * (length as usize);
+        // x, z, y order: index = x + z * width + y * width * length.
+        let (w, l) = (width as u64, length as u64);
         let mut offset = 0;
-        let mut idx = 0;
+        let mut idx = 0u64;
         while offset < block_data.len() && idx < total_blocks {
-            let pal_id = read_varint(block_data, &mut offset)? as usize;
-            if let Some(Some(pal_idx)) = region_pal_indices.get(pal_id) {
-                let x = (idx % (width as usize)) as i64;
-                let z = ((idx / (width as usize)) % (length as usize)) as i64;
-                let y = (idx / ((width as usize) * (length as usize))) as i64;
-                let _ = region.set_block_index(BlockPosition::new(x, y, z), Some(*pal_idx));
+            let pal_id = read_varint(block_data, &mut offset)?;
+            if let Some(pal_idx) = region_pal_indices.get(&pal_id) {
+                let pos = BlockPosition::new(
+                    (idx % w) as i64,
+                    (idx / (w * l)) as i64,
+                    ((idx / w) % l) as i64,
+                );
+                let _ = region.set_block_index(pos, Some(*pal_idx));
             }
             idx += 1;
+        }
+        if idx < total_blocks {
+            // Never trust the declared size: missing entries would otherwise
+            // silently read as air.
+            return Err(FormatError::InvalidStructure(format!(
+                "Schematic declares {width}x{height}x{length} blocks but the block data holds only {idx} of {total_blocks}"
+            )));
         }
 
         let nested = version >= 3;
@@ -322,8 +334,12 @@ impl SpongeSchematic {
             index_to_sponge.push(id);
         }
 
-        let total_blocks = (width as usize) * (height as usize) * (length as usize);
-        let mut block_data_bytes = Vec::with_capacity(total_blocks);
+        let total_blocks = region_volume(width, height, length).ok_or_else(|| {
+            FormatError::InvalidStructure(format!(
+                "A {width}x{height}x{length} volume is too large to export as a Sponge schematic"
+            ))
+        })?;
+        let mut block_data_bytes = Vec::with_capacity(total_blocks as usize);
         for y in 0..(height as i64) {
             for z in 0..(length as i64) {
                 for x in 0..(width as i64) {

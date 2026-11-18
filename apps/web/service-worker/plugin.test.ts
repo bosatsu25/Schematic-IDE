@@ -8,18 +8,18 @@ const enc = (s: string) => new TextEncoder().encode(s);
 
 describe('renderServiceWorker', () => {
   const entries = [
-    { url: '/schematic_wasm.wasm', content: enc('wasm-v1') },
-    { url: '/assets/index-abc.js', content: enc('js-v1') },
-    { url: '/index.html', content: enc('<html>') },
+    { url: 'schematic_wasm.wasm', content: enc('wasm-v1') },
+    { url: 'assets/index-abc.js', content: enc('js-v1') },
+    { url: 'index.html', content: enc('<html>') },
   ];
 
   it('embeds every precached URL (sorted) and a build-hashed cache name', () => {
     const { source, hash, urls } = renderServiceWorker(template, entries);
-    expect(urls).toEqual(['/assets/index-abc.js', '/index.html', '/schematic_wasm.wasm']);
+    expect(urls).toEqual(['assets/index-abc.js', 'index.html', 'schematic_wasm.wasm']);
     expect(hash).toMatch(/^[0-9a-f]{16}$/);
     expect(source).toContain(`const BUILD_HASH = '${hash}';`);
-    expect(source).toContain('"/assets/index-abc.js"');
-    expect(source).toContain('"/schematic_wasm.wasm"');
+    expect(source).toContain('"assets/index-abc.js"');
+    expect(source).toContain('"schematic_wasm.wasm"');
     expect(source).not.toContain('__SW_');
   });
 

@@ -43,8 +43,35 @@ pub fn read_nbt<R: Read>(reader: &mut R) -> Result<(String, NbtTag), NbtError> {
         return Ok((String::new(), NbtTag::End));
     }
     let name = read_string_payload(reader)?;
-    let payload = read_payload(reader, tag_id)?;
+    let payload = read_payload(reader, tag_id, 0)?;
     Ok((name, payload))
+}
+
+/// Maximum nesting of compounds/lists (the vanilla limit).
+const MAX_DEPTH: usize = 512;
+
+/// Largest decompressed NBT accepted. Far above any real schematic (a dense
+/// 10M-block litematic is tens of MiB) and below the wasm32 address space,
+/// so a gzip bomb becomes an error instead of an out-of-memory abort.
+pub const MAX_DECOMPRESSED_BYTES: u64 = 1 << 30;
+
+/// Reads exactly `len` bytes without trusting `len` for the allocation: a
+/// corrupt length on a short stream fails with `UnexpectedEnd` instead of
+/// trying to allocate gigabytes.
+fn read_bytes<R: Read>(reader: &mut R, len: usize) -> Result<Vec<u8>, NbtError> {
+    let mut bytes = Vec::with_capacity(len.min(1 << 20));
+    let read = reader.take(len as u64).read_to_end(&mut bytes)?;
+    if read != len {
+        return Err(NbtError::UnexpectedEnd);
+    }
+    Ok(bytes)
+}
+
+fn read_len<R: Read>(reader: &mut R, what: &str) -> Result<usize, NbtError> {
+    let mut len_buf = [0u8; 4];
+    reader.read_exact(&mut len_buf)?;
+    let len = i32::from_be_bytes(len_buf);
+    usize::try_from(len).map_err(|_| NbtError::Io(format!("Negative {what} length")))
 }
 
 pub fn write_nbt<W: Write>(writer: &mut W, name: &str, tag: &NbtTag) -> Result<(), NbtError> {
@@ -62,8 +89,7 @@ fn read_string_payload<R: Read>(reader: &mut R) -> Result<String, NbtError> {
     let mut len_buf = [0u8; 2];
     reader.read_exact(&mut len_buf)?;
     let len = u16::from_be_bytes(len_buf) as usize;
-    let mut bytes = vec![0u8; len];
-    reader.read_exact(&mut bytes)?;
+    let bytes = read_bytes(reader, len)?;
     String::from_utf8(bytes).map_err(|_| NbtError::InvalidUtf8)
 }
 
@@ -76,7 +102,10 @@ fn write_string_payload<W: Write>(writer: &mut W, value: &str) -> Result<(), Nbt
     Ok(())
 }
 
-fn read_payload<R: Read>(reader: &mut R, tag_id: u8) -> Result<NbtTag, NbtError> {
+fn read_payload<R: Read>(reader: &mut R, tag_id: u8, depth: usize) -> Result<NbtTag, NbtError> {
+    if depth > MAX_DEPTH {
+        return Err(NbtError::Io("NBT is nested too deeply".to_string()));
+    }
     match tag_id {
         0 => Ok(NbtTag::End),
         1 => {
@@ -110,15 +139,8 @@ fn read_payload<R: Read>(reader: &mut R, tag_id: u8) -> Result<NbtTag, NbtError>
             Ok(NbtTag::Double(f64::from_be_bytes(buf)))
         }
         7 => {
-            let mut len_buf = [0u8; 4];
-            reader.read_exact(&mut len_buf)?;
-            let len = i32::from_be_bytes(len_buf);
-            if len < 0 {
-                return Err(NbtError::Io("Negative byte array length".to_string()));
-            }
-            let mut bytes = vec![0u8; len as usize];
-            reader.read_exact(&mut bytes)?;
-            Ok(NbtTag::ByteArray(bytes))
+            let len = read_len(reader, "byte array")?;
+            Ok(NbtTag::ByteArray(read_bytes(reader, len)?))
         }
         8 => {
             let s = read_string_payload(reader)?;
@@ -134,9 +156,13 @@ fn read_payload<R: Read>(reader: &mut R, tag_id: u8) -> Result<NbtTag, NbtError>
             if len <= 0 {
                 return Ok(NbtTag::List(item_type, Vec::new()));
             }
-            let mut items = Vec::with_capacity(len as usize);
+            if item_type == 0 {
+                // Zero-size items would let a 4-byte length allocate gigabytes.
+                return Err(NbtError::Io("Non-empty list of TAG_End".to_string()));
+            }
+            let mut items = Vec::with_capacity((len as usize).min(1 << 16));
             for _ in 0..len {
-                items.push(read_payload(reader, item_type)?);
+                items.push(read_payload(reader, item_type, depth + 1)?);
             }
             Ok(NbtTag::List(item_type, items))
         }
@@ -150,40 +176,32 @@ fn read_payload<R: Read>(reader: &mut R, tag_id: u8) -> Result<NbtTag, NbtError>
                     break;
                 }
                 let key = read_string_payload(reader)?;
-                let value = read_payload(reader, next_id)?;
+                let value = read_payload(reader, next_id, depth + 1)?;
                 compound.insert(key, value);
             }
             Ok(NbtTag::Compound(compound))
         }
         11 => {
-            let mut len_buf = [0u8; 4];
-            reader.read_exact(&mut len_buf)?;
-            let len = i32::from_be_bytes(len_buf);
-            if len < 0 {
-                return Err(NbtError::Io("Negative int array length".to_string()));
-            }
-            let mut items = Vec::with_capacity(len as usize);
-            for _ in 0..len {
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                items.push(i32::from_be_bytes(buf));
-            }
-            Ok(NbtTag::IntArray(items))
+            let len = read_len(reader, "int array")?;
+            let byte_len = len
+                .checked_mul(4)
+                .ok_or_else(|| NbtError::Io("Int array too long".to_string()))?;
+            let bytes = read_bytes(reader, byte_len)?;
+            let (words, _) = bytes.as_chunks::<4>();
+            Ok(NbtTag::IntArray(
+                words.iter().map(|b| i32::from_be_bytes(*b)).collect(),
+            ))
         }
         12 => {
-            let mut len_buf = [0u8; 4];
-            reader.read_exact(&mut len_buf)?;
-            let len = i32::from_be_bytes(len_buf);
-            if len < 0 {
-                return Err(NbtError::Io("Negative long array length".to_string()));
-            }
-            let mut items = Vec::with_capacity(len as usize);
-            for _ in 0..len {
-                let mut buf = [0u8; 8];
-                reader.read_exact(&mut buf)?;
-                items.push(i64::from_be_bytes(buf));
-            }
-            Ok(NbtTag::LongArray(items))
+            let len = read_len(reader, "long array")?;
+            let byte_len = len
+                .checked_mul(8)
+                .ok_or_else(|| NbtError::Io("Long array too long".to_string()))?;
+            let bytes = read_bytes(reader, byte_len)?;
+            let (words, _) = bytes.as_chunks::<8>();
+            Ok(NbtTag::LongArray(
+                words.iter().map(|b| i64::from_be_bytes(*b)).collect(),
+            ))
         }
         other => Err(NbtError::InvalidTagId(other)),
     }
@@ -268,10 +286,25 @@ fn write_payload<W: Write>(writer: &mut W, tag: &NbtTag) -> Result<(), NbtError>
 }
 
 pub fn decode_gzip_or_raw(bytes: &[u8]) -> Result<(String, NbtTag), NbtError> {
+    decode_with_limit(bytes, MAX_DECOMPRESSED_BYTES)
+}
+
+/// Like [`decode_gzip_or_raw`], rejecting gzip streams that inflate to more
+/// than `max_decompressed` bytes.
+pub fn decode_with_limit(
+    bytes: &[u8],
+    max_decompressed: u64,
+) -> Result<(String, NbtTag), NbtError> {
     if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
-        let mut decoder = GzDecoder::new(bytes);
+        let mut decoder = GzDecoder::new(bytes).take(max_decompressed.saturating_add(1));
         let mut decompressed = Vec::new();
         decoder.read_to_end(&mut decompressed)?;
+        if decompressed.len() as u64 > max_decompressed {
+            return Err(NbtError::Io(format!(
+                "Decompressed data exceeds {} MiB",
+                max_decompressed >> 20
+            )));
+        }
         let mut cursor = Cursor::new(decompressed);
         read_nbt(&mut cursor)
     } else {

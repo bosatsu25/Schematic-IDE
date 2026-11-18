@@ -235,7 +235,16 @@ pub struct StructureStatistics {
     pub surface_cell_count: usize,
     pub island_count: usize,
     pub feature_counts: BTreeMap<String, usize>,
+    /// True when surface/feature analysis was skipped because the structure
+    /// has more than [`SURFACE_ANALYSIS_MAX_BLOCKS`] blocks; the surface
+    /// fields above are then zero/empty. Materials and counts are exact.
+    #[serde(default)]
+    pub surface_analysis_skipped: bool,
 }
+
+/// Surface analysis needs roughly 1 KiB per block (see docs/benchmarks.md),
+/// so above this many blocks it would exhaust the browser's WASM memory.
+pub const SURFACE_ANALYSIS_MAX_BLOCKS: usize = 500_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnalysisReport {
@@ -1593,6 +1602,7 @@ impl Session {
         let mut surface_cell_count = 0usize;
         let mut island_count = 0usize;
         let mut feature_counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut surface_analysis_skipped = false;
 
         let target_regions: Vec<&schematic_core::Region> = if let Some(rid) = region_id {
             let r = doc
@@ -1637,21 +1647,35 @@ impl Session {
                 None => max_pos = Some(reg_max),
             }
 
-            // Count materials
+            // Count materials per palette index; names are built once per
+            // palette entry, not once per block.
             let palette = region.palette();
+            let mut counts = vec![0usize; palette.len()];
             for (_, chunk) in region.chunks() {
                 for (_, pal_idx) in chunk.occupied_blocks() {
-                    if let Some(state) = palette.get(pal_idx) {
-                        if !is_air(state.id()) {
-                            total_non_air += 1;
-                            let key = block_state_to_string(state);
-                            *block_counts.entry(key).or_insert(0) += 1;
-                        }
+                    if let Some(slot) = counts.get_mut(pal_idx.get() as usize) {
+                        *slot += 1;
                     }
                 }
             }
+            let mut region_non_air = 0usize;
+            for (pal_idx, state) in palette.iter() {
+                let count = counts[pal_idx.get() as usize];
+                if count > 0 && !is_air(state.id()) {
+                    region_non_air += count;
+                    *block_counts
+                        .entry(block_state_to_string(state))
+                        .or_insert(0) += count;
+                }
+            }
+            total_non_air += region_non_air;
 
-            // Run surface and feature analysis
+            // Surface and feature analysis is memory-hungry: skip it for
+            // structures it would not fit (tracked in issue #36).
+            if region_non_air > SURFACE_ANALYSIS_MAX_BLOCKS {
+                surface_analysis_skipped = true;
+                continue;
+            }
             let target = OperationTarget::unconstrained(Selection::from_bounds(region.bounds()));
             if let Ok(surface) = SurfaceAnalyzer::analyze(doc, reg_id, &target, &policy) {
                 surface_cell_count += surface.cells().len();
@@ -1734,6 +1758,7 @@ impl Session {
             surface_cell_count,
             island_count,
             feature_counts,
+            surface_analysis_skipped,
         };
 
         Ok(AnalysisReport {

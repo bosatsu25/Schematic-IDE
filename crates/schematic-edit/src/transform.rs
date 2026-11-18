@@ -75,72 +75,121 @@ pub fn mirror_shape(shape: &str) -> &str {
     }
 }
 
+const HORIZONTALS: [&str; 4] = ["north", "east", "south", "west"];
+
+/// Rail shapes name the directions a rail connects (`north_south`,
+/// `south_east`, `ascending_west`, ...). Maps every direction token and
+/// restores the canonical spelling. Other `shape` values (stairs) pass through.
+fn map_rail_shape(shape: &str, map: impl Fn(&str) -> String) -> String {
+    if let Some(dir) = shape.strip_prefix("ascending_") {
+        return format!("ascending_{}", map(dir));
+    }
+    let Some((a, b)) = shape.split_once('_') else {
+        return shape.to_string();
+    };
+    if !HORIZONTALS.contains(&a) || !HORIZONTALS.contains(&b) {
+        return shape.to_string();
+    }
+    let (a, b) = (map(a), map(b));
+    // Canonical order: north/south before east/west; "north_south", "east_west".
+    let rank = |d: &str| match d {
+        "north" => 0,
+        "south" => 1,
+        "east" => 2,
+        _ => 3,
+    };
+    let (first, second) = if rank(&a) <= rank(&b) { (a, b) } else { (b, a) };
+    format!("{first}_{second}")
+}
+
+/// Applies a horizontal direction mapping to every orientation property:
+/// `facing`, the `north`/`east`/`south`/`west` connection flags of fences,
+/// walls, panes, redstone wire and similar blocks, and rail shapes.
+fn map_directions(
+    state: &BlockState,
+    map: impl Fn(&str) -> String,
+    mut other: impl FnMut(&BlockProperty) -> BlockProperty,
+) -> BlockState {
+    let props: Vec<BlockProperty> = state
+        .properties()
+        .map(|prop| {
+            let name = prop.name();
+            let val = prop.value();
+            if name == "facing" {
+                BlockProperty::new(name, map(val))
+            } else if HORIZONTALS.contains(&name) {
+                BlockProperty::new(map(name), val)
+            } else if name == "shape" {
+                BlockProperty::new(name, map_rail_shape(val, &map))
+            } else {
+                other(prop)
+            }
+        })
+        .collect();
+    BlockState::new(state.id(), props).unwrap_or_else(|_| state.clone())
+}
+
 pub fn rotate_block_state(state: &BlockState, angle: RotationAngle) -> BlockState {
-    let mut props = Vec::new();
-    for prop in state.properties() {
-        let name = prop.name();
-        let val = prop.value();
-        match name {
-            "facing" => {
-                let new_val = rotate_facing(val, angle);
-                props.push(BlockProperty::new(name, new_val));
-            }
-            "axis" => {
-                let new_val = rotate_axis(val, angle);
-                props.push(BlockProperty::new(name, new_val));
-            }
-            "rotation" => {
-                if let Ok(rot) = val.parse::<u32>() {
+    map_directions(
+        state,
+        |dir| rotate_facing(dir, angle).to_string(),
+        |prop| match prop.name() {
+            "axis" => BlockProperty::new("axis", rotate_axis(prop.value(), angle)),
+            "rotation" => match prop.value().parse::<u32>() {
+                Ok(rot) => {
                     let delta = match angle {
                         RotationAngle::Deg90 => 4,
                         RotationAngle::Deg180 => 8,
                         RotationAngle::Deg270 => 12,
                     };
-                    let new_rot = (rot + delta) % 16;
-                    props.push(BlockProperty::new(name, new_rot.to_string()));
-                } else {
-                    props.push(prop.clone());
+                    BlockProperty::new("rotation", ((rot + delta) % 16).to_string())
                 }
-            }
-            _ => {
-                props.push(prop.clone());
-            }
-        }
-    }
-    BlockState::new(state.id(), props).unwrap_or_else(|_| state.clone())
+                Err(_) => prop.clone(),
+            },
+            _ => prop.clone(),
+        },
+    )
 }
 
 pub fn mirror_block_state(state: &BlockState, axis: MirrorAxis) -> BlockState {
-    let mut props = Vec::new();
-    for prop in state.properties() {
-        let name = prop.name();
-        let val = prop.value();
-        match name {
-            "facing" => {
-                let new_val = mirror_facing(val, axis);
-                props.push(BlockProperty::new(name, new_val));
-            }
-            "shape" => {
-                let new_val = mirror_shape(val);
-                props.push(BlockProperty::new(name, new_val));
-            }
-            "rotation" => {
-                if let Ok(rot) = val.parse::<u32>() {
+    // A mirror swaps handedness: stair corners, door hinges, double chests.
+    let swap_side = |value: &str| match value {
+        "left" => "right".to_string(),
+        "right" => "left".to_string(),
+        other => other.to_string(),
+    };
+    let mirrored = map_directions(
+        state,
+        |dir| mirror_facing(dir, axis).to_string(),
+        |prop| match prop.name() {
+            "rotation" => match prop.value().parse::<u32>() {
+                Ok(rot) => {
                     let new_rot = match axis {
                         MirrorAxis::X => (16 - rot) % 16,
                         MirrorAxis::Z => (24 - rot) % 16,
                     };
-                    props.push(BlockProperty::new(name, new_rot.to_string()));
-                } else {
-                    props.push(prop.clone());
+                    BlockProperty::new("rotation", new_rot.to_string())
                 }
+                Err(_) => prop.clone(),
+            },
+            "hinge" => BlockProperty::new("hinge", swap_side(prop.value())),
+            // Chest halves; slabs use "type" too but with top/bottom/double.
+            "type" => BlockProperty::new("type", swap_side(prop.value())),
+            _ => prop.clone(),
+        },
+    );
+    // Stair shapes (inner_left, outer_right, ...) flip handedness as well.
+    let props: Vec<BlockProperty> = mirrored
+        .properties()
+        .map(|prop| {
+            if prop.name() == "shape" {
+                BlockProperty::new("shape", mirror_shape(prop.value()))
+            } else {
+                prop.clone()
             }
-            _ => {
-                props.push(prop.clone());
-            }
-        }
-    }
-    BlockState::new(state.id(), props).unwrap_or_else(|_| state.clone())
+        })
+        .collect();
+    BlockState::new(mirrored.id(), props).unwrap_or(mirrored)
 }
 
 pub fn rotate_relative_coords(

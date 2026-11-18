@@ -65,14 +65,12 @@ export function serviceWorkerPlugin(options: ServiceWorkerPluginOptions = {}): P
   const fileName = options.fileName ?? 'sw.js';
   const templatePath = options.template ?? DEFAULT_TEMPLATE;
   let outDir = '';
-  let base = '/';
 
   return {
     name: 'schematic-ide:service-worker',
     apply: 'build',
     configResolved(config) {
       outDir = resolve(config.root, config.build.outDir);
-      base = config.base.endsWith('/') ? config.base : `${config.base}/`;
     },
     writeBundle() {
       // By now Vite has written the bundle and copied `public/` into outDir.
@@ -80,7 +78,8 @@ export function serviceWorkerPlugin(options: ServiceWorkerPluginOptions = {}): P
         .map((file) => relative(outDir, file).split(sep).join('/'))
         .filter((rel) => rel !== fileName && !rel.endsWith('.map'))
         .map((rel) => ({
-          url: `${base}${rel}`,
+          // Relative to sw.js, which sits at the root of the build output.
+          url: rel,
           content: readFileSync(join(outDir, rel)),
         }));
       const { source, hash, urls } = renderServiceWorker(

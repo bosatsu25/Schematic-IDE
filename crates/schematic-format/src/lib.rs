@@ -9,10 +9,10 @@ pub use convert::{
     conversion_report, merge_regions, ConversionLoss, ConversionReport, ExportTarget, LossSeverity,
     MergedDocument, SourceExtras,
 };
-pub use litematic::{FormatError, LitematicDocument, RawRegionData};
+pub use litematic::{FormatError, LitematicDocument, RawRegionData, MAX_REGION_VOLUME};
 pub use nbt::{decode_gzip_or_raw, encode_gzip, read_nbt, write_nbt, NbtError, NbtTag};
 pub use sponge::SpongeSchematic;
-pub use structure::StructureDocument;
+pub use structure::{StructureDocument, STRUCTURE_MAX_EXPORT_VOLUME};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SchematicFormatType {

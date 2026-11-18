@@ -98,10 +98,20 @@ jobs:
             /^\[[^]]+\]: / { next }
             printing { print }
           ' CHANGELOG.md > release-notes.md
-          gh release create "$GITHUB_REF_NAME" "$ARCHIVE" \
-            --verify-tag \
-            --title "Schematic IDE ${GITHUB_REF_NAME}" \
-            --notes-file release-notes.md
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # The release was created from the GitHub UI (which also pushed
+            # the tag and started this run): attach the site and fill in the
+            # notes instead of failing on "release already exists".
+            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "Schematic IDE ${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" "$ARCHIVE" \
+              --verify-tag \
+              --title "Schematic IDE ${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md
+          fi
 
   pages:
     if: vars.DEPLOY_PAGES == 'true'

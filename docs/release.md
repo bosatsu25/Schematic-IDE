@@ -16,7 +16,13 @@ GitHub Pages.
      that sets its own `version`
 3. `CHANGELOG.md` has a section for the version; replace `Unreleased` with the
    release date. The workflow uses that section as the release notes.
-4. Tag and push:
+4. Create the tag, either way works:
+
+   - **GitHub UI**: *Releases → Draft a new release*, choose a new tag
+     `v0.1.0` on `main`, and publish. Creating the tag starts the workflow,
+     which attaches the site zip to that release and fills in the notes from
+     the changelog.
+   - **Command line**: tag and push:
 
    ```bash
    git tag -a v0.1.0 -m "Schematic IDE v0.1.0"

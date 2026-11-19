@@ -1,12 +1,21 @@
 name: Release
 
 # Publishes a GitHub Release (built site attached as a zip) for every pushed
-# `v*` tag. Deploys to GitHub Pages too when the repository variable
-# DEPLOY_PAGES is "true". See docs/release.md.
+# `v*` tag, or when run manually from `main` with a version: the run then
+# creates tag v<version> on the commit it built. Without a version a manual
+# run is a dry run (checks and build only). Deploys to GitHub Pages too when
+# the repository variable DEPLOY_PAGES is "true". See docs/release.md.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to release from main, e.g. 0.1.0 (creates tag v0.1.0).
+          Leave empty for a dry run.
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -36,12 +45,38 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Decide what to release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          elif [ -n "$INPUT_VERSION" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "Manual releases must run on main (this run is on ${GITHUB_REF})" >&2
+              exit 1
+            fi
+            if [[ ! "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+              echo "Version '${INPUT_VERSION}' is not semver (e.g. 0.1.0)" >&2
+              exit 1
+            fi
+            tag="v${INPUT_VERSION}"
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              echo "Tag ${tag} already exists; push a new version instead" >&2
+              exit 1
+            fi
+          fi
+          echo "RELEASE_TAG=${tag}" >> "$GITHUB_ENV"
+          echo "Release tag: ${tag:-<none, dry run>}"
+
       - name: Check the tag matches the app version
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: |
           version="$(node -p "require('./apps/web/package.json').version")"
-          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match apps/web/package.json version ${version}" >&2
+          if [ "v${version}" != "${RELEASE_TAG}" ]; then
+            echo "Tag ${RELEASE_TAG} does not match apps/web/package.json version ${version}" >&2
             exit 1
           fi
           if ! grep -q "^## \[${version}\]" CHANGELOG.md; then
@@ -70,7 +105,8 @@ jobs:
 
       - name: Package the site
         run: |
-          name="schematic-ide-${GITHUB_REF_NAME//\//-}"
+          label="${RELEASE_TAG:-${GITHUB_REF_NAME}}"
+          name="schematic-ide-${label//\//-}"
           (cd apps/web/dist && zip -qr "../../../${name}.zip" .)
           echo "ARCHIVE=${name}.zip" >> "$GITHUB_ENV"
 
@@ -87,29 +123,33 @@ jobs:
           path: apps/web/dist
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           # Release notes: this version's section of CHANGELOG.md.
           awk -v v="$version" '
             /^## \[/ { printing = index($0, "## [" v "]") == 1; next }
             /^\[[^]]+\]: / { next }
             printing { print }
           ' CHANGELOG.md > release-notes.md
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             # The release was created from the GitHub UI (which also pushed
             # the tag and started this run): attach the site and fill in the
             # notes instead of failing on "release already exists".
-            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber
-            gh release edit "$GITHUB_REF_NAME" \
-              --title "Schematic IDE ${GITHUB_REF_NAME}" \
+            gh release upload "$RELEASE_TAG" "$ARCHIVE" --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "Schematic IDE ${RELEASE_TAG}" \
               --notes-file release-notes.md
           else
-            gh release create "$GITHUB_REF_NAME" "$ARCHIVE" \
-              --verify-tag \
-              --title "Schematic IDE ${GITHUB_REF_NAME}" \
+            # A pushed tag already exists; a manual run creates the tag on
+            # exactly the commit that was checked and built.
+            verify=()
+            [[ "$GITHUB_REF" == refs/tags/* ]] && verify=(--verify-tag)
+            gh release create "$RELEASE_TAG" "$ARCHIVE" "${verify[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "Schematic IDE ${RELEASE_TAG}" \
               --notes-file release-notes.md
           fi
 

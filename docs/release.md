@@ -16,7 +16,12 @@ GitHub Pages.
      that sets its own `version`
 3. `CHANGELOG.md` has a section for the version; replace `Unreleased` with the
    release date. The workflow uses that section as the release notes.
-4. Create the tag, either way works:
+4. Create the tag, any of these works:
+
+   - **Run the workflow**: *Actions → Release → Run workflow* on `main`, with
+     the version (e.g. `0.1.0`). The run checks and builds `main`, then
+     creates tag `v0.1.0` on that commit and publishes the release. Leaving
+     the version empty is a dry run (checks and build only).
 
    - **GitHub UI**: *Releases → Draft a new release*, choose a new tag
      `v0.1.0` on `main`, and publish. Creating the tag starts the workflow,
